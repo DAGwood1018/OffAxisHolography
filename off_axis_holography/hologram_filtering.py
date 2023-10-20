@@ -2,8 +2,8 @@ import numpy as np
 import cv2
 from scipy import signal
 from scipy.optimize import minimize
-from off_axis_holography.discrete_transforms import DFT
-from off_axis_holography.utilities import gridspace, format_img, reference_wave
+from discrete_transforms import DFT
+from utilities import gridspace, format_img, reference_wave
 from warnings import warn
 from line_profiler import profile
 

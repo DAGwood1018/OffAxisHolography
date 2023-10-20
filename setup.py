@@ -1,4 +1,5 @@
 from setuptools import setup
+from Cython.Build import cythonize
 
 if __name__ == '__main__':
     setup(
@@ -7,5 +8,6 @@ if __name__ == '__main__':
         author='Davis Garwood',
         description='Code for Performing Off-axis Holography.',
         packages=['off_axis_holography'],
-        install_requires=['numpy', 'scipy', 'pyfftw', 'numba', 'cython']
+        ext_modules=cythonize("primes.pyx", language_level="3"),
+        install_requires=['numpy', 'scipy', 'pyfftw', 'numba', 'cython', 'opencv-python']
     )

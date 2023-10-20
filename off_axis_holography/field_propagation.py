@@ -1,8 +1,8 @@
 import numpy as np
 from abc import ABC, abstractmethod
 from copy import copy
-from off_axis_holography.utilities import gridspace
-from off_axis_holography.discrete_transforms import DFT
+from utilities import gridspace
+from discrete_transforms import DFT
 
 def fresnel(field, z, wl, sz, **kwargs):
     """

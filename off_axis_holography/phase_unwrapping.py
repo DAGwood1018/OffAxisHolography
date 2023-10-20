@@ -1,6 +1,6 @@
 import numpy as np
-from off_axis_holography.utilities import wrap_to_pi
-from off_axis_holography.discrete_transforms import REDFT
+from utilities import wrap_to_pi
+from discrete_transforms import REDFT
 from line_profiler import profile
 
 def unwrap_phase(phase_wrap, **kwargs):
