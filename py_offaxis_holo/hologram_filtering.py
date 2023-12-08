@@ -2,6 +2,7 @@ import numpy as np
 import cv2
 from scipy import signal
 from scipy.optimize import minimize
+from abc import ABC
 from py_offaxis_holo.discrete_transforms import DFT
 from off_axis_utils.holo_tools import reference_wave
 from off_axis_utils.manage_arrays import gridspace
@@ -18,10 +19,28 @@ def tukey_window(dims, alpha=0.5):
         window = np.tensordot(window, wn, axes=0)
     return window
 
-class OffAxisMasks:
+class OffAxMasking(ABC, DFT):
 
-    def __init__(self, fx, fy, center, radius=None):
-        r = np.sqrt(np.sum(np.array(center) ** 2))
+    def __init__(self, M, N, nb=1, threads=1, dtype='complex128', **kwargs):
+        super().__init__((M, N), nb, threads=threads, dtype=dtype, ortho=False, **kwargs)
+        self._Fx, self._Fy = gridspace(N, M, nb, True)
+        self._mask = None
+
+    @property
+    def masked(self):
+        if self._mask is None:
+            return False
+        else:
+            return True
+
+    def _calc_mask(self, f1, radius=None):
+        """
+
+        :param f1: Frequency coords of +/-1 order in the form [fx, fy]
+        :return:
+        """
+
+        r = np.sqrt(np.sum(np.array(f1) ** 2))
         if radius is None:
             r_1 = r / 3
             r_DC = 2 * r_1
@@ -30,30 +49,43 @@ class OffAxisMasks:
             r_1 = radius
             r_DC = r - r_1
 
-        mask10 = np.sqrt((fx - center[0]) ** 2 + (fy - center[1]) ** 2) < r_1
-        mask01 = np.sqrt((fx + center[0]) ** 2 + (fy + center[1]) ** 2) < r_1
-        mask00 = np.sqrt(fx ** 2 + fy ** 2) < r_DC
-        self._masks = {'+1': mask10, 'DC': mask00, '-1': mask01}
+        mask10 = np.sqrt((self._Fx - f1[0]) ** 2 + (self._Fy - f1[1]) ** 2) < r_1
+        mask01 = np.sqrt((self._Fx + f1[0]) ** 2 + (self._Fy + f1[1]) ** 2) < r_1
+        mask00 = np.sqrt(self._Fx ** 2 + self._Fy ** 2) < r_DC
+        return mask10, mask01, mask00
 
-    def __call__(self, Fh, mask='+1'):
-        return Fh * self._masks[mask]
-
-    def get_mask(self, mask='+1'):
-        pass
-
-    def crop_to_mask(self, a, mask='+1'):
-        coords = np.argwhere(self._masks[mask])
+    def _crop_to_mask(self, a):
+        if self._mask is None:
+            raise RuntimeError("No stored mask found.")
+        coords = np.argwhere(self._mask)
         m_min, n_min = coords.min(axis=0)
         m_max, n_max = coords.max(axis=0)
         return a[m_min:m_max + 1, n_min:n_max + 1]
 
-    def mask_size(self, mask='+1'):
-        coords = np.argwhere(self._masks[mask] > 0)
+    # TODO Not working properly
+    def roi_size(self):
+        if self._mask is None:
+            raise RuntimeError("No stored mask found.")
+        coords = np.argwhere(self._mask > 0)
         m_min, n_min = coords.min(axis=0)
         m_max, n_max = coords.max(axis=0)
         return m_max - m_min + 1, n_max - n_min + 1
 
-class OffAxisFilter(DFT):
+    def alignment_mask(self, right=True):
+        M, N = self._dims
+        fx = (8 * N + M - np.sqrt(8 * (N ** 2 + M ** 2) + 2 * N * M)) / 14
+        fy = (N + 8 * M - np.sqrt(8 * (N ** 2 + M ** 2) + 2 * N * M)) / 14
+
+        sign = -1 if right else 1
+        f1_opt = (fx, sign * fy)
+        mask10, mask01, mask00 = self._calc_mask(f1_opt)
+        return mask10 + mask01 + mask00, f1_opt
+
+    def reset(self):
+        self._mask = None
+
+
+class OffAxFilter(OffAxMasking):
 
     def __init__(self, M, N, wl, sz, nb=1, threads=1, dtype='complex128', **kwargs):
         """
@@ -69,46 +101,17 @@ class OffAxisFilter(DFT):
         :param kwargs:
         """
 
-        super().__init__((M, N), nb, threads=threads, dtype=dtype, ortho=False, **kwargs)
-        self._Fx, self._Fy = gridspace(N, M, nb, True)
+        super().__init__(M, N, nb, threads=threads, dtype=dtype, **kwargs)
         self._k0 = 2 * np.pi / wl
         self._sz = sz
         self._crop = False
-
-        self._mask = None
-        self._ref = None
-        self._window = np.ones(self._dims)
-
-class SpatialFreqFilter(DFT):
-
-    def __init__(self, M, N, wl, sz, nb=1, threads=1, dtype='complex128', **kwargs):
-        """
-        *Using un-normalized FFTs is fine since we are only concerned with the phase information.
-
-        :param M:
-        :param N:
-        :param wl:
-        :param sz:
-        :param nb:
-        :param threads:
-        :param dtype:
-        :param kwargs:
-        """
-
-        super().__init__((M, N), nb, threads=threads, dtype=dtype, ortho=False, **kwargs)
-        self._Fx, self._Fy = gridspace(N, M, nb, True)
-        self._k0 = 2 * np.pi / wl
-        self._sz = sz
-        self._crop = False
-
-        self._mask = None
         self._ref = None
         self._window = np.ones(self._dims)
 
     # Could be speed up by masking in the image plane before FFT
     @profile
     def __call__(self, fringes):
-        if not self.calibrated:
+        if not self.masked:
             self.calibrate(fringes)
 
         Fh = self.forwards(fringes) if self._ref is None else self.forwards(fringes * self._ref)
@@ -174,36 +177,7 @@ class SpatialFreqFilter(DFT):
         fy = M * self._sz * k[1] / (2 * np.pi)
         return np.array([fx, fy])
 
-    def _calc_mask(self, f1, radius=None):
-        """
-
-        :param f1: Frequency coords of +/-1 order in the form [fx, fy]
-        :return:
-        """
-
-        r = np.sqrt(np.sum(np.array(f1) ** 2))
-        if radius is None:
-            r_1 = r / 3
-            r_DC = 2 * r_1
-        else:
-            assert radius < r, "Radius of mask can not exceed distance from image center."
-            r_1 = radius
-            r_DC = r - r_1
-
-        mask10 = np.sqrt((self._Fx - f1[0]) ** 2 + (self._Fy - f1[1]) ** 2) < r_1
-        mask01 = np.sqrt((self._Fx + f1[0]) ** 2 + (self._Fy + f1[1]) ** 2) < r_1
-        mask00 = np.sqrt(self._Fx ** 2 + self._Fy ** 2) < r_DC
-        return mask10, mask01, mask00
-
-    # Speed this up
-    def _crop_to_mask(self, a):
-        if self._mask is None:
-            raise RuntimeError("No stored mask found.")
-        coords = np.argwhere(self._mask)
-        m_min, n_min = coords.min(axis=0)
-        m_max, n_max = coords.max(axis=0)
-        return a[m_min:m_max + 1, n_min:n_max + 1]
-
+    # TODO This stopped working for some reason
     def _select_roi(self, Fh, auto=False):
         Fh_img = format_img(Fh)
 
@@ -272,7 +246,7 @@ class SpatialFreqFilter(DFT):
         mag = np.absolute(xvec) ** 2 + np.absolute(yvec) ** 2
         return mag.sum()
 
-    def _optimize_tilt(self, f1, phase, method='TNC', step=1, tol=1e-6, opts={}):
+    def _optimize_tilt(self, f1, phase, method='TNC', step=1, tol=1e-6, opts=None):
         print("Aligning Mask to Inferred Tilt...")
         M, N = self._dims
         X, Y = gridspace(N, M, 1, True)
@@ -281,6 +255,8 @@ class SpatialFreqFilter(DFT):
         X = self._crop_to_mask(X)
         Y = self._crop_to_mask(Y)
 
+        if opts is None:
+            opts = {}
         bounds = [(f1[0]-step, f1[0]+step), (f1[1]-step, f1[1]+step)]
         res = minimize(self._min_ksqr, f1, args=(phase, X, Y),
                        method=method, bounds=bounds, tol=tol, options=opts)
@@ -300,32 +276,6 @@ class SpatialFreqFilter(DFT):
         self._mask = np.sqrt(self._Fx ** 2 + self._Fy ** 2) < r_1
         self._ref = self.construct_reference(f1, M, N)
         return True
-
-    # Not working properly
-    def roi_size(self):
-        if self._mask is None:
-            raise RuntimeError("No stored mask found.")
-        coords = np.argwhere(self._mask > 0)
-        m_min, n_min = coords.min(axis=0)
-        m_max, n_max = coords.max(axis=0)
-        return m_max - m_min + 1, n_max - n_min + 1
-
-    @property
-    def calibrated(self):
-        if self._mask is None:
-            return False
-        else:
-            return True
-
-    def alignment_mask(self, right=True):
-        M, N = self._dims
-        fx = (8 * N + M - np.sqrt(8 * (N ** 2 + M ** 2) + 2 * N * M)) / 14
-        fy = (N + 8 * M - np.sqrt(8 * (N ** 2 + M ** 2) + 2 * N * M)) / 14
-
-        sign = -1 if right else 1
-        f1_opt = (fx, sign * fy)
-        mask10, mask01, mask00 = self._calc_mask(f1_opt)
-        return mask10 + mask01 + mask00, f1_opt
 
     @profile
     def forwards(self, a):
@@ -409,8 +359,8 @@ class SpatialFreqFilter(DFT):
         return f1
 
     def reset(self):
+        super().reset()
         self._crop = False
-        self._mask = None
         self._ref = None
         self._window = np.ones(self._dims)
         self._ifft.refactor(self.shape)
