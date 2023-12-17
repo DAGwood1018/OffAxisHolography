@@ -28,3 +28,7 @@ scripts/debug_simulate.py
 scripts/phase_extract_debug.py
 scripts/fourier_spectrum_analysis.py
 scripts/debug_tilt_compensation.py
+/cpp_offaxis_holo/dft.o
+/cpp_offaxis_holo/dft_test
+/cpp_offaxis_holo/main.o
+/cpp_offaxis_holo/DFT
