@@ -1,5 +1,5 @@
 import numpy as np
-
+from scipy import signal
 
 def reference_wave(XY, tilt, k0, sz, A=1):
     k = k0 * np.sin(tilt)
@@ -31,4 +31,11 @@ def phase_diff(h, wl, n, n0):
 def height_profile(phase, wl, n, n0):
     return phase * wl / (2 * np.pi * (n-n0))
 
-
+def tukey_window(dims, alpha=0.5):
+    if dims is int or len(dims) == 1:
+        return signal.windows.tukey(dims, alpha=alpha)
+    window = signal.windows.tukey(dims[0], alpha=alpha)
+    for n in dims[1:]:
+        wn = signal.windows.tukey(n, alpha=alpha)
+        window = np.tensordot(window, wn, axes=0)
+    return window

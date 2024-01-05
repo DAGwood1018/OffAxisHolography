@@ -127,7 +127,7 @@ class Propagate(DFT, ABC):
 
         super().__init__((M, N), nb, threads=threads, dtype=dtype, ortho=False, **kwargs)
         self._X, self._Y = gridspace(N, M, 1, True)
-        self._Fx, self._Fy = gridspace(N, M, nb, True)  # Can replace with freqs
+        self._Fx, self._Fy = gridspace(N, M, nb, True)
         self._k0 = 2 * np.pi / wl
         self._sz = sz
 

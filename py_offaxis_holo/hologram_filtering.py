@@ -1,23 +1,12 @@
-import numpy as np
-import cv2
-from scipy import signal
-from scipy.optimize import minimize
 from abc import ABC
+import numpy as np
+from scipy.optimize import minimize
 from py_offaxis_holo.discrete_transforms import DFT
 from off_axis_utils.holo_tools import reference_wave
 from off_axis_utils.manage_arrays import gridspace
 from off_axis_utils.image_processing import format_img
 from warnings import warn
-from line_profiler import profile
-
-def tukey_window(dims, alpha=0.5):
-    if dims is int or len(dims) == 1:
-        return signal.windows.tukey(dims, alpha=alpha)
-    window = signal.windows.tukey(dims[0], alpha=alpha)
-    for n in dims[1:]:
-        wn = signal.windows.tukey(n, alpha=alpha)
-        window = np.tensordot(window, wn, axes=0)
-    return window
+import cv2
 
 class OffAxMasking(ABC, DFT):
 
@@ -54,6 +43,53 @@ class OffAxMasking(ABC, DFT):
         mask00 = np.sqrt(self._Fx ** 2 + self._Fy ** 2) < r_DC
         return mask10, mask01, mask00
 
+    def _find_max(self, Fh):
+        """
+        Finds maximum value of a masked Fourier spectrum
+
+        :param Fh: Masked Fourier spectrum
+        :type Fh: array
+        :return: Indices of maximum in the form [fx, fy]
+        :rtype: ndarray
+        """
+
+        fy, fx = np.where(Fh == np.amax(Fh))
+        if len(fx) == 0:
+            raise RuntimeError("No maximum identified.")
+        if len(fx) > 1:
+            warn("Multiple maximums detected. Using median value.")
+            fx = np.median(fx)
+            fy = np.median(fy)
+
+        M, N = self.shape
+        f = np.array([fx - N / 2, fy - M / 2])
+        return f.reshape(f.size, ) / self._nb
+
+    def _select_roi(self, Fh, auto=False):
+        Fh_img = format_img(Fh)
+
+        print('Select Order of Interest.')
+        cv2.namedWindow('spfilter_roi_selector', cv2.WINDOW_NORMAL)
+        ROI = cv2.selectROI('spfilter_roi_selector', Fh_img, fromCenter=True)
+
+        roi_mask = np.zeros(self.shape)
+        roi_mask[int(ROI[1]):int(ROI[1] + ROI[3]), int(ROI[0]): int(ROI[0] + ROI[2])] = 1
+
+        M, N = self._dims
+        fx = int(ROI[0] + ROI[2] // 2) - N / 2
+        fy = int(ROI[1] + ROI[3] // 2) - M / 2
+        f1 = np.array([fx, fy]) / self._nb
+
+        if auto:
+            try:
+                f1 = self._find_max(Fh * roi_mask)
+            except RuntimeError:
+                warn("Failed to automatically find peak. Resorting to chosen center.")
+
+        cv2.destroyWindow('spfilter_roi_selector')
+        print(f'Selected ROI centered at a tilt of ({f1[0]}, {f1[1]}).')
+        return roi_mask, f1
+
     def _crop_to_mask(self, a):
         if self._mask is None:
             raise RuntimeError("No stored mask found.")
@@ -62,11 +98,10 @@ class OffAxMasking(ABC, DFT):
         m_max, n_max = coords.max(axis=0)
         return a[m_min:m_max + 1, n_min:n_max + 1]
 
-    # TODO Not working properly
     def roi_size(self):
         if self._mask is None:
             raise RuntimeError("No stored mask found.")
-        coords = np.argwhere(self._mask > 0)
+        coords = np.argwhere(self._mask)
         m_min, n_min = coords.min(axis=0)
         m_max, n_max = coords.max(axis=0)
         return m_max - m_min + 1, n_max - n_min + 1
@@ -80,9 +115,6 @@ class OffAxMasking(ABC, DFT):
         f1_opt = (fx, sign * fy)
         mask10, mask01, mask00 = self._calc_mask(f1_opt)
         return mask10 + mask01 + mask00, f1_opt
-
-    def reset(self):
-        self._mask = None
 
 
 class OffAxFilter(OffAxMasking):
@@ -108,8 +140,6 @@ class OffAxFilter(OffAxMasking):
         self._ref = None
         self._window = np.ones(self._dims)
 
-    # Could be speed up by masking in the image plane before FFT
-    @profile
     def __call__(self, fringes):
         if not self.masked:
             self.calibrate(fringes)
@@ -123,28 +153,6 @@ class OffAxFilter(OffAxMasking):
                 shift = (Fh.shape[k] - i1 - i2) // 2
                 Fh = np.roll(Fh, shift, axis=k)
         return self.backwards(Fh)
-
-    def _find_max(self, Fh):
-        """
-        Finds maximum value of a masked Fourier spectrum
-
-        :param Fh: Masked Fourier spectrum
-        :type Fh: array
-        :return: Indices of maximum in the form [fx, fy]
-        :rtype: ndarray
-        """
-
-        fy, fx = np.where(Fh == np.amax(Fh))
-        if len(fx) == 0:
-            raise RuntimeError("No maximum identified.")
-        if len(fx) > 1:
-            warn("Multiple maximums detected. Using median value.")
-            fx = np.median(fx)
-            fy = np.median(fy)
-
-        M, N = self.shape
-        f = np.array([fx - N / 2, fy - M / 2])
-        return f.reshape(f.size, ) / self._nb
 
     def _calc_tilt(self, f1):
         """
@@ -176,33 +184,6 @@ class OffAxFilter(OffAxMasking):
         fx = N * self._sz * k[0] / (2 * np.pi)
         fy = M * self._sz * k[1] / (2 * np.pi)
         return np.array([fx, fy])
-
-    # TODO This stopped working for some reason
-    def _select_roi(self, Fh, auto=False):
-        Fh_img = format_img(Fh)
-
-        print('Select Order of Interest.')
-        cv2.namedWindow('spfilter_roi_selector', cv2.WINDOW_NORMAL)
-        ROI = cv2.selectROI('spfilter_roi_selector', Fh_img, fromCenter=True)
-
-        roi_mask = np.zeros(self.shape)
-        roi_mask[int(ROI[1]):int(ROI[1] + ROI[3]), int(ROI[0]): int(ROI[0] + ROI[2])] = 1
-
-        M, N = self._dims
-        fx = int(ROI[0] + ROI[2] // 2) - N / 2
-        fy = int(ROI[1] + ROI[3] // 2) - M / 2
-        f1 = np.array([fx, fy]) / self._nb
-
-        if auto:
-            try:
-                f1 = self._find_max(Fh * roi_mask)
-            except RuntimeError:
-                warn("Failed to automatically find peak. Resorting to chosen center.")
-
-        cv2.destroyWindow('spfilter_roi_selector')
-        tilt = np.rad2deg(self._calc_tilt(f1))
-        print(f'Selected ROI centered at a tilt of ({tilt[0]}, {tilt[1]}) degrees.')
-        return roi_mask, f1
 
     def _visualize_roi(self, fringes):
         if not self._ref is None:
@@ -277,12 +258,10 @@ class OffAxFilter(OffAxMasking):
         self._ref = self.construct_reference(f1, M, N)
         return True
 
-    @profile
     def forwards(self, a):
         a = self.pad_arr(a * self._window) if self._nb > 1 else a * self._window
         return np.fft.fftshift(self._fft(a))
 
-    @profile
     def backwards(self, b):
         if self._crop and not self._mask is None:
             b = self._crop_to_mask(b)
@@ -359,7 +338,7 @@ class OffAxFilter(OffAxMasking):
         return f1
 
     def reset(self):
-        super().reset()
+        self._mask = None
         self._crop = False
         self._ref = None
         self._window = np.ones(self._dims)

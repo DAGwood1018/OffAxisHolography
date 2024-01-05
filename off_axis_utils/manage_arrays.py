@@ -19,6 +19,21 @@ def gridspace(N, M, nb=1, center=False):
     y = np.linspace(-0.5 * M, 0.5 * M, dims[1]) if center else np.linspace(0, M, dims[1])
     return np.meshgrid(x, y, indexing='xy')
 
+def freqspace(N, M, nb=1):
+    """
+    :param N, M: Shape of 2D arrays to operate on.
+    :type N, M: int
+    :param nb: Determines grid spacing.
+    :type nb: float
+    :return: Meshgrids of X and Y.
+    :rtype: ndarray, ndarray
+    """
+
+    nb = nb if nb >= 1 else 1
+    dims = np.ceil(nb * np.array([N, M])).astype('int64')
+    x = np.fft.fftfreq(dims[0])
+    y = np.fft.fftfreq(dims[1])
+    return np.meshgrid(x, y, indexing='xy')
 
 def pad_arr(a, nb):
     """
