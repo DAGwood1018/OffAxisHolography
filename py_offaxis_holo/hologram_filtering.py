@@ -2,9 +2,7 @@ from abc import ABC
 import numpy as np
 from scipy.optimize import minimize
 from py_offaxis_holo.discrete_transforms import DFT
-from off_axis_utils.holo_tools import reference_wave
-from off_axis_utils.manage_arrays import gridspace
-from off_axis_utils.image_processing import format_img
+from py_offaxis_holo.holo_utils import reference_wave, gridspace, format_img
 from warnings import warn
 import cv2
 

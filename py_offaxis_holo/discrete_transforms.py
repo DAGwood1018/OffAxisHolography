@@ -1,6 +1,7 @@
 import pyfftw
 import numpy as np
-from off_axis_utils.manage_arrays import pad_arr, unpad_arr
+from py_offaxis_holo.holo_utils import pad_arr, unpad_arr
+
 
 def fft(a, **kwargs):
     """
