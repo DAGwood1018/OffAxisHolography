@@ -1,1 +1,0 @@
-/usr/bin/c++ -fPIC -shared  -o ../dft_lib.so CMakeFiles/dft_lib.dir/src/DFT.cpp.o  -lfftw3 -lfftw3_threads -lm 
