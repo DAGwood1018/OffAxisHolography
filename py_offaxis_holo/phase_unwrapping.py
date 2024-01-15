@@ -1,6 +1,5 @@
 import numpy as np
 from py_offaxis_holo.discrete_transforms import REDFT
-from line_profiler import profile
 
 def wrap_to_2pi(angle):
     angle = np.remainder(angle, 2 * np.pi).astype(angle.dtype)
@@ -20,19 +19,22 @@ def unwrap_phase(phase_wrap, **kwargs):
 
 class PhaseUnwrap(REDFT):
 
-    #TODO Add citation for paper this method is based on
+    '''
+    This class is adapted from the method described in https://doi.org/10.1088/1361-6501/aaec5c.
+    The author's Matlab implementation can be found here https://www.mathworks.com/matlabcentral/fileexchange/68493-robust-2d-phase-unwrapping-algorithm.
+    '''
 
     def __init__(self, Nx, Ny, nb=1, threads=1, dtype='float64', zero=False, **kwargs):
         super().__init__((Nx, Ny), nb, threads=threads, ortho=True, dtype=dtype, **kwargs)
         self._zero = zero
 
-    @profile
     def __call__(self, phase_wrap):
         phi1 = self.unwrap(phase_wrap)
         phi1 += np.mean(phase_wrap) - np.mean(phi1)  # adjust piston
         K1 = np.round((phi1 - phase_wrap) / (2 * np.pi))  # calculate integer K
         phase_unwrap = phase_wrap + 2 * K1 * np.pi
         residue = wrap_to_pi(phase_unwrap - phi1)
+        
         phi1 += self.unwrap(residue)
         phi1 += np.mean(phase_wrap) - np.mean(phi1)  # adjust piston
         K2 = np.round((phi1 - phase_wrap) / (2 * np.pi))  # calculate integer K
@@ -49,7 +51,6 @@ class PhaseUnwrap(REDFT):
             residue = wrap_to_pi(phase_unwrap - phi1)
         return phase_unwrap - phase_unwrap.min() if self._zero else phase_unwrap
 
-    @profile
     def _solve(self, rho):
         # solve the Poisson equation using DCT
         dct_rho = self.forwards(rho)
@@ -62,7 +63,6 @@ class PhaseUnwrap(REDFT):
         phi = self.backwards(dct_phi)
         return phi
 
-    @profile
     def unwrap(self, phase_wrap):
         edx = np.concatenate((np.zeros((phase_wrap.shape[0], 1)), wrap_to_pi(np.diff(phase_wrap, axis=1, n=1)),
                               np.zeros((phase_wrap.shape[0], 1))), axis=1)

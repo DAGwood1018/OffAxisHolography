@@ -8,6 +8,7 @@ from holo_utils import format_img
 from warnings import warn
 import cv2
 
+
 class OffAxMasking(ABC):
 
     def __init__(self, M, N):
@@ -21,15 +22,15 @@ class OffAxMasking(ABC):
             return False
         else:
             return True
-        
-    @property 
+
+    @property
     def roi(self):
         if self._mask is None:
-            return (0, 0, self._dims[0], self._dims[1])
+            return 0, 0, self._dims[0], self._dims[1]
         coords = np.argwhere(self._mask)
         m_min, n_min = coords.min(axis=0)
         m_max, n_max = coords.max(axis=0)
-        return (m_min, n_min, m_max-m_min+1, n_max-n_min+1)
+        return m_min, n_min, m_max - m_min + 1, n_max - n_min + 1
 
     def _calc_mask(self, f1, radius=None):
         """
@@ -111,7 +112,7 @@ class OffAxMasking(ABC):
 class OffAxFilter(OffAxMasking):
 
     def __init__(self, fringes, wl, sz, radius=None, optimize=False,
-                  visualize=False, opts={}, window_fcn=np.ones, params={}):
+                 visualize=False, opts={}, window_fcn=np.ones, params={}):
         """
         *Using un-normalized FFTs is fine since we are only concerned with the phase information.
         """
@@ -126,7 +127,7 @@ class OffAxFilter(OffAxMasking):
         self._calibrate(fringes, radius, optimize, visualize, **opts)
 
     def __call__(self, threads=1, flags=0):
-        return holo_lib.OffAxFilter(np.array(self._dims, dtype=int), np.array(self.roi, dtype=int), \
+        return holo_lib.OffAxFilter(np.array(self._dims, dtype=int), np.array(self.roi, dtype=int),
                                     self._mask, self._ref, self._window, threads, flags)
 
     def _calc_tilt(self, f1):
@@ -208,13 +209,13 @@ class OffAxFilter(OffAxMasking):
         X, Y = gridspace(N, M, 1, True)
 
         x, y, dx, dy = self.roi
-        phase = phase[x:x+dx, y:y+dy]
-        X = X[x:x+dx, y:y+dy]
-        Y = Y[x:x+dx, y:y+dy]
+        phase = phase[x:x + dx, y:y + dy]
+        X = X[x:x + dx, y:y + dy]
+        Y = Y[x:x + dx, y:y + dy]
 
         if opts is None:
             opts = {}
-        bounds = [(f1[0]-step, f1[0]+step), (f1[1]-step, f1[1]+step)]
+        bounds = [(f1[0] - step, f1[0] + step), (f1[1] - step, f1[1] + step)]
         res = minimize(self._min_ksqr, f1, args=(phase, X, Y),
                        method=method, bounds=bounds, tol=tol, options=opts)
 

@@ -1,13 +1,17 @@
 #include "OffAxFilter.h"
 #include<stdexcept>
+#include<cmath>
 #include<iostream>
+
 using namespace std;
+namespace py = pybind11;
 
 /**
 * @brief Initialize off-axis filter object.
 **/
-OffAxFilter::OffAxFilter(py::array_t<int> n, py::array_t<int> roi, py::array_t<bool> mask, 
-                py::array_t<complex<double>> ref, py::array_t<double> window, unsigned threads, unsigned flags) {
+OffAxFilter::OffAxFilter(py::array_t<int, py::array::c_style | py::array::forcecast> n, py::array_t<int, py::array::c_style | py::array::forcecast> roi, 
+                        py::array_t<bool, py::array::c_style | py::array::forcecast> mask, py::array_t<complex<double>, py::array::c_style | py::array::forcecast> ref, 
+                        py::array_t<double, py::array::c_style | py::array::forcecast> window, unsigned nthreads, unsigned flags) {
     
     // Access numpy arrays
     py::buffer_info sz_buf = n.request();
@@ -46,8 +50,9 @@ OffAxFilter::~OffAxFilter() {
     fftw_free(this->a);
     fftw_free(this->b);
     fftw_free(this->c);
-    fftw_destroy_plan(this->plan_forward);
-    fftw_destroy_plan(this->plan_backward);
+    fftw_free(this->d);
+    fftw_destroy_plan(this->fft_forward);
+    fftw_destroy_plan(this->fft_backward);
 }
 
 
@@ -56,22 +61,20 @@ OffAxFilter::~OffAxFilter() {
 **/
 void OffAxFilter::alloc() {
 
-    // This multithreading is breaking. Should I go back to DFT implementation that worked for some reason?
     // Initiate multithreading
-    //if (fftw_init_threads()==0) {
-    //    printf("Error in initiating multi-threading.");
-    //} else {
-    //    fftw_plan_with_nthreads(this->nthreads);
-    //}
-
-    int roi_shape[2] = {this->roi[2], this->roi[3]};
+    if (fftw_init_threads()==0) {
+        printf("Error in initiating multi-threading.");
+    } else {
+        fftw_plan_with_nthreads(this->nthreads);
+    }
 
     this->nthreads = fftw_planner_nthreads();
     this->a = (fftw_complex *) fftw_alloc_complex(this->N);
     this->b = (fftw_complex *) fftw_alloc_complex(this->N);
     this->c = (fftw_complex *) fftw_alloc_complex(roi[2]*roi[3]);
-    this->plan_forward = fftw_plan_dft(2, this->shape, this->a, this->b, FFTW_FORWARD, this->flags);
-    this->plan_backward = fftw_plan_dft(2, roi_shape, this->c, this->c, FFTW_BACKWARD, this->flags);
+    this->d = (fftw_complex *) fftw_alloc_complex(roi[2]*roi[3]);
+    this->fft_forward = fftw_plan_dft(2, this->shape, this->a, this->b, FFTW_FORWARD, this->flags);
+    this->fft_backward = fftw_plan_dft_2d(this->roi[2], this->roi[3], this->c, this->d, FFTW_BACKWARD, this->flags);
 }
 
 
@@ -80,6 +83,36 @@ void OffAxFilter::alloc() {
 **/
 int OffAxFilter::size() {
     return this->N;
+}
+
+/**
+ * @brief Returns the number of threads in use.
+**/
+int OffAxFilter::threads_in_use() {
+    return this->nthreads;
+}
+
+
+/**
+ * @brief Python call function that filters interfence pattern and returns numpy array.
+ * @param fringes Numpy ndarray.
+**/
+py::array_t<complex<double>> OffAxFilter::__call__(py::array_t<complex<double>, py::array::c_style | py::array::forcecast> fringes) {
+    complex<double> c;
+    bool res = this->filter(fringes);
+    size_t shape[2] = {static_cast<size_t>(this->roi[2]), static_cast<size_t>(this->roi[3])};
+    py::array_t<complex<double>> field(shape);
+    if (res) {
+        auto view =  field.mutable_unchecked<2>();
+        for (auto i=0; i<field.shape(0); i++) {
+            for (auto j=0; j<field.shape(1); j++) {
+                c.real(this->d[i*field.shape(0) + j][0]);
+                c.imag(this->d[i*field.shape(0) + j][1]);
+                view(i, j) = c;
+            }
+        }
+    }
+    return field;
 }
 
 
@@ -91,6 +124,7 @@ bool OffAxFilter::filter(vector<complex<double>> *fringes) {
     bool res = this->write(fringes);
     if (res) {
         this->forwards();
+        this->crop();
         this->backwards();
     }
     return res;
@@ -101,10 +135,11 @@ bool OffAxFilter::filter(vector<complex<double>> *fringes) {
  * @brief Filter a provided interference pattern.
  * @param fringes Numpy ndarray.
 **/
-bool OffAxFilter::filter(py::array_t<complex<double>> fringes) {
+bool OffAxFilter::filter(py::array_t<complex<double>, py::array::c_style | py::array::forcecast> fringes) {
     bool res = this->write(fringes);
     if (res) {
         this->forwards();
+        this->crop();
         this->backwards();
     }
     return res;
@@ -112,11 +147,25 @@ bool OffAxFilter::filter(py::array_t<complex<double>> fringes) {
 
 
 /**
+ * @brief Extracts the phase information from the filtered field.
+**/
+double* OffAxFilter::extract_phase() {
+    complex<double> c;
+    double* phase_wrap = new double[this->roi[2]*this->roi[3]];
+    for (auto i = 0; i < this->roi[2]*this->roi[3]; i++) {
+        c.real(this->d[i][0]);
+        c.imag(this->d[i][1]);
+        phase_wrap[i] = arg(c);
+    }
+    return phase_wrap;
+}
+
+
+/**
  * @brief Executes plan for FFT transform.
 **/
 void OffAxFilter::forwards() {
-    fftw_execute(this->plan_forward);
-    this->crop();
+    fftw_execute(this->fft_forward);
 }
 
 
@@ -124,12 +173,7 @@ void OffAxFilter::forwards() {
  * @brief Executes plan for IFFT transform.
 **/
 void OffAxFilter::backwards() {
-    fftw_execute(this->plan_backward);
-    /*
-    for (unsigned i=0; i<this->size(); i++) {
-        this->a[i][0] /= this->size();
-        this->a[i][1] /= this->size();
-    } */
+    fftw_execute(this->fft_backward);
 }
 
 
@@ -138,8 +182,8 @@ void OffAxFilter::backwards() {
 **/
 void OffAxFilter::crop() {
     int k, l=0;
-    for (int i=this->roi[0]; i<this->roi[0]+this->roi[2]; i++) {
-        for (int j=this->roi[1]; j<roi[1]+this->roi[3]; j++) {
+    for (auto i=this->roi[0]; i<this->roi[0]+this->roi[2]; i++) {
+        for (auto j=this->roi[1]; j<roi[1]+this->roi[3]; j++) {
             k = j*this->shape[1] + i;
             this->c[l][0] = this->b[k][0];
             this->c[l][1] = this->b[k][1];
@@ -155,7 +199,7 @@ void OffAxFilter::crop() {
 **/
 bool OffAxFilter::write(vector<complex<double>> *vec) {
     if (vec->size() == this->N) {
-        for (unsigned i=0; i<this->N; i++) {
+        for (auto i=0; i<this->N; i++) {
             (*vec)[i] *= this->ref[i] * this->window[i];
             this->a[i][0] = real((*vec)[i]);
             this->a[i][1] = imag((*vec)[i]);
@@ -171,7 +215,7 @@ bool OffAxFilter::write(vector<complex<double>> *vec) {
  * @brief Writes numpy array to memory.
  * @param arr Numpy ndarray.
 **/
-bool OffAxFilter::write(py::array_t<complex<double>> arr) {
+bool OffAxFilter::write(py::array_t<complex<double>, py::array::c_style | py::array::forcecast> arr) {
     // Access the underlying buffer of the NumPy array
     py::buffer_info buf = arr.request();
     
@@ -182,7 +226,7 @@ bool OffAxFilter::write(py::array_t<complex<double>> arr) {
     unsigned size = buf.size;
 
     if (size == this->N) {
-        for (unsigned i=0; i<this->N; i++) {
+        for (auto i=0; i<this->N; i++) {
             ptr[i] *= this->ref[i] * this->window[i];
             this->a[i][0] = ptr[i].real();
             this->a[i][1] = ptr[i].imag();
@@ -196,11 +240,11 @@ bool OffAxFilter::write(py::array_t<complex<double>> arr) {
 
 void OffAxFilter::to_string(bool inverse) {
     if (inverse) {
-        for (int i = 0; i < this->N; i++) {
-            printf("%3d %+9.5f %+9.5f i\n", i, this->b[i][0], this->b[i][1]);
+        for (auto i = 0; i < this->roi[2]*this->roi[3]; i++) {
+            printf("%3d %+9.5f %+9.5f i\n", i, this->c[i][0], this->c[i][1]);
         }
     } else {
-        for (int i = 0; i < this->N; i++) {
+        for (auto i = 0; i < this->N; i++) {
             printf("%3d %+9.5f %+9.5f i\n", i, this->a[i][0], this->a[i][1]);
         }
     }

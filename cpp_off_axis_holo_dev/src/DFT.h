@@ -24,6 +24,7 @@ public:
     virtual void forwards();
     virtual void backwards();
     int size();
+    int threads_in_use();
 
 protected:
     fftw_complex *a; // Data transformed by forward and written to by backward

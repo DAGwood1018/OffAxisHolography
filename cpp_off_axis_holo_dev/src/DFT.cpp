@@ -91,6 +91,13 @@ int DFT::size() {
 }
 
 /**
+ * @brief Returns the number of threads in use.
+**/
+int DFT::threads_in_use() {
+    return this->nthreads;
+}
+
+/**
  * @brief Executes plan for FFT transform.
 **/
 void DFT::forwards() {

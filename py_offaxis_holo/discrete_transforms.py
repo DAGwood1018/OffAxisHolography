@@ -92,6 +92,7 @@ def IFFT(dims, threads=1, dtype='complex128', **kwargs):
     if dtype != 'complex128' and dtype != 'complex64':
         dtype = 'complex128'
     return DiscreteTransform(dims, 'FFTW_BACKWARD', dtype, threads, **kwargs)
+
 def DCT(dims, threads=1, dtype='float64', **kwargs):
     """
     Initialize discrete cosine transform.
