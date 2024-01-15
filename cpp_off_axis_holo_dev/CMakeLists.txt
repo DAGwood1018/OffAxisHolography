@@ -16,7 +16,7 @@ include_directories(${Python_INCLUDE_DIRS})
 include_directories(${PYBIND11_DIR}/include)
 
 # Add the pybind11 source files
-add_library(holo_lib MODULE src/DFT.cpp src/OffAxFilter.cpp src/bind.cpp)
+add_library(holo_lib MODULE src/OffAxFilter.cpp src/bind.cpp)
 
 # Set filename
 set_target_properties(holo_lib PROPERTIES PREFIX "" OUTPUT_NAME "holo_lib" SUFFIX ".so")
