@@ -1,9 +1,13 @@
 from abc import ABC
 import numpy as np
+import holo_lib
 from scipy.optimize import minimize
-from py_offaxis_holo.holo_utils import reference_wave, gridspace, format_img
+from holo_utils import reference_wave
+from holo_utils import gridspace
+from holo_utils import format_img
 from warnings import warn
 import cv2
+
 
 class OffAxMasking(ABC):
 
@@ -18,6 +22,15 @@ class OffAxMasking(ABC):
             return False
         else:
             return True
+
+    @property
+    def roi(self):
+        if self._mask is None:
+            return 0, 0, self._dims[0], self._dims[1]
+        coords = np.argwhere(self._mask)
+        m_min, n_min = coords.min(axis=0)
+        m_max, n_max = coords.max(axis=0)
+        return m_min, n_min, m_max - m_min + 1, n_max - n_min + 1
 
     def _calc_mask(self, f1, radius=None):
         """
@@ -95,47 +108,32 @@ class OffAxMasking(ABC):
         m_max, n_max = coords.max(axis=0)
         return a[m_min:m_max + 1, n_min:n_max + 1]
 
-    def roi_size(self):
-        if self._mask is None:
-            raise RuntimeError("No stored mask found.")
-        coords = np.argwhere(self._mask)
-        m_min, n_min = coords.min(axis=0)
-        m_max, n_max = coords.max(axis=0)
-        return m_max - m_min + 1, n_max - n_min + 1
-
-    def alignment_mask(self, right=True):
-        M, N = self._dims
-        fx = (8 * N + M - np.sqrt(8 * (N ** 2 + M ** 2) + 2 * N * M)) / 14
-        fy = (N + 8 * M - np.sqrt(8 * (N ** 2 + M ** 2) + 2 * N * M)) / 14
-
-        sign = -1 if right else 1
-        f1_opt = (fx, sign * fy)
-        mask10, mask01, mask00 = self._calc_mask(f1_opt)
-        return mask10 + mask01 + mask00, f1_opt
 
 class OffAxFilter(OffAxMasking):
 
-    def __init__(self, fringes, wl, sz, radius=None, tilt_compensate_in='FP', auto=True, optimize=False, crop=False,
-                  visualize=False, opts={}, window_fcn=np.ones, params={}):
+    def __init__(self, fringes, wl, sz, radius=None, optimize=False,
+                 visualize=False, opts={}, window_fcn=np.ones, params={}):
         """
         *Using un-normalized FFTs is fine since we are only concerned with the phase information.
-
-
         """
 
         super().__init__(fringes.shape[0], fringes.shape[1])
         self._k0 = 2 * np.pi / wl
         self._sz = sz
-        self._crop = False
         self._ref = None
-        self._window = np.ones(self._dims)
+        self._window = np.ones(self._dims, dtype=float)
 
         self._add_window(window_fcn, **params)
-        self._calibrate(fringes, radius, tilt_compensate_in, auto, optimize, crop, visualize, **opts)
+        self._calibrate(fringes, radius, optimize, visualize, **opts)
+        # Reference wave, mask is passed to C++ correctly
+        # Window seemed to be corrupted
 
     def __call__(self, threads=1, flags=0):
-        # TODO Should return the bound C++ object
-        return None
+        roi = self.roi
+        filter = holo_lib.OffAxFilter(np.array([self._dims[0], self._dims[1]], dtype=int), np.array(roi, dtype=int),
+                                    self._mask, self._ref, threads, flags)
+        unwrapper = holo_lib.PhaseUnwrap(np.array([roi[2], roi[3]], dtype=int), threads, flags)
+        return filter, unwrapper
 
     def _calc_tilt(self, f1):
         """
@@ -215,13 +213,14 @@ class OffAxFilter(OffAxMasking):
         M, N = self._dims
         X, Y = gridspace(N, M, 1, True)
 
-        phase = self._crop_to_mask(phase)
-        X = self._crop_to_mask(X)
-        Y = self._crop_to_mask(Y)
+        x, y, dx, dy = self.roi
+        phase = phase[x:x + dx, y:y + dy]
+        X = X[x:x + dx, y:y + dy]
+        Y = Y[x:x + dx, y:y + dy]
 
         if opts is None:
             opts = {}
-        bounds = [(f1[0]-step, f1[0]+step), (f1[1]-step, f1[1]+step)]
+        bounds = [(f1[0] - step, f1[0] + step), (f1[1] - step, f1[1] + step)]
         res = minimize(self._min_ksqr, f1, args=(phase, X, Y),
                        method=method, bounds=bounds, tol=tol, options=opts)
 
@@ -256,35 +255,13 @@ class OffAxFilter(OffAxMasking):
         X, Y = gridspace(N, M, 1, True)
         return reference_wave((X, Y), tilt, self._k0, self._sz)
 
-    def _align_to_freq(self, f1, tilt_compensate_in='FP'):
-        if tilt_compensate_in == 'IP':
-            self._set_tilt_compensation(f1)
-        else:
-            self._mask, _, _ = self._calc_mask(f1)
-        return True
-
-    def _calibrate(self, fringes, radius=None, tilt_compensate_in='FP', auto=True, optimize=False, crop=False,
-                   visualize=False, **kwargs):
-
-        if tilt_compensate_in.upper() != 'IP' and tilt_compensate_in.upper() != 'FP':
-            warn("Defaulting to compensating for tilt in Fourier plane.")
-            tilt_compensate_in = 'FP'
-        if not auto and tilt_compensate_in == 'IP':
-            warn("To use a manually selected mask, tilt compensation must be done in Fourier plane.")
-            tilt_compensate_in = 'FP'
-        if not auto and optimize:
-            warn("No optimization can be done if the manually selected mask is to be used.")
-            optimize = False
+    def _calibrate(self, fringes, radius=None, optimize=False, visualize=False, **kwargs):
 
         Fh = np.fft.fftn(fringes * self._window)
         Fh_scaled = 2 * np.log(np.abs(Fh) + 1e-10)
-        roi_mask, f1 = self._select_roi(Fh_scaled, auto)
+        roi_mask, f1 = self._select_roi(Fh_scaled, True)
 
-        if auto:
-            self._mask, _, _ = self._calc_mask(f1, radius)
-        else:
-            self._mask = roi_mask
-
+        self._mask, _, _ = self._calc_mask(f1, radius)
         if optimize:
             try:
                 Fh = np.fft.fftn(fringes * self._window) * self._mask
@@ -294,10 +271,7 @@ class OffAxFilter(OffAxMasking):
             except RuntimeError:
                 warn("Could not align to tilt.")
 
-        if tilt_compensate_in.upper() == 'IP':
-            self._set_tilt_compensation(f1, radius)
-
-        self._crop = crop
+        self._set_tilt_compensation(f1, radius)
         if visualize:
             self._visualize_roi(fringes)
         return f1

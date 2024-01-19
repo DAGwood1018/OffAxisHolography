@@ -121,14 +121,18 @@ class OffAxFilter(OffAxMasking):
         self._k0 = 2 * np.pi / wl
         self._sz = sz
         self._ref = None
-        self._window = np.ones(self._dims)
+        self._window = np.ones(self._dims, dtype=float)
 
         self._add_window(window_fcn, **params)
         self._calibrate(fringes, radius, optimize, visualize, **opts)
+        # Reference wave, mask is passed to C++ correctly
+        # Window seemed to be corrupted
 
     def __call__(self, threads=1, flags=0):
-        return holo_lib.OffAxFilter(np.array(self._dims, dtype=int), np.array(self.roi, dtype=int),
-                                    self._mask, self._ref, self._window, threads, flags)
+        roi = self.roi
+        filter = holo_lib.OffAxFilter(np.array(self._dims, dtype=int), np.array(roi, dtype=int), self._mask.astype(np.double), self._ref.astype(np.complex128), threads, flags)
+        #unwrapper = holo_lib.PhaseUnwrap(np.array([roi[2], roi[3]], dtype=int), threads, flags)
+        return filter, None
 
     def _calc_tilt(self, f1):
         """

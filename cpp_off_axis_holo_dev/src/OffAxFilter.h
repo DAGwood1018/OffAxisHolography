@@ -1,8 +1,9 @@
-#ifndef OFFAXFILTER_H
-#define OFFAXFILTER_H
+#ifndef FILTER_H
+#define FILTER_H
 
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
+#include <opencv2/opencv.hpp>
 #include <complex.h>
 #include <fftw3.h>
 #include <vector>
@@ -14,20 +15,20 @@ class OffAxFilter {
 
 public:
     OffAxFilter(py::array_t<int, py::array::c_style | py::array::forcecast> n, py::array_t<int, py::array::c_style | py::array::forcecast> roi, 
-                py::array_t<bool, py::array::c_style | py::array::forcecast> mask, py::array_t<complex<double>, py::array::c_style | py::array::forcecast> ref, 
-                py::array_t<double, py::array::c_style | py::array::forcecast> window, unsigned nthreads, unsigned flags);
+                py::array_t<double, py::array::c_style | py::array::forcecast> mask, py::array_t<complex<double>, py::array::c_style | py::array::forcecast> ref,
+                unsigned threads, unsigned flags);
     ~OffAxFilter();
-
-    py::array_t<complex<double>> __call__(py::array_t<complex<double>, py::array::c_style | py::array::forcecast> fringes);
-    bool filter(py::array_t<complex<double>, py::array::c_style | py::array::forcecast> fringes);
-    bool filter(vector<complex<double>> *fringes);
-    double* extract_phase();
+    
+    py::array_t<double> __call__(py::array_t<uint8_t, py::array::c_style | py::array::forcecast> fringes);
+    bool filter(py::array_t<uint8_t, py::array::c_style | py::array::forcecast> fringes);
     void forwards();
     void backwards();
     int size();
     int threads_in_use();
 
-    void to_string(bool inverse);
+    void show_input();
+    void show_output();
+    void show_filtered();
 
 protected:
 
@@ -41,18 +42,17 @@ protected:
     fftw_plan fft_forward; // FFTW plan for fft
 	fftw_plan fft_backward; // FFTW plan for ifft
 
-
+    int rank;
     int N; // Number of elements.
     int* shape; // Shape of input.
     int* roi; // ROI to crop input to.
-    double *window; // Window to apply before transforming.
     complex<double> *ref; // Reference beam for tilt correction.
-    bool *mask; // Mask to apply in the Fourier plane.
+    double *mask; // Mask to apply in the Fourier plane.
 
     void alloc();
-    void crop(); 
-    bool write(vector<complex<double>> *vec);
-    bool write(py::array_t<complex<double>, py::array::c_style | py::array::forcecast> arr);
+    void crop();
+    void show(fftw_complex *arr, bool cropped, bool log_scale);
+    bool write(py::array_t<uint8_t, py::array::c_style | py::array::forcecast> arr);
 };
 
 #endif

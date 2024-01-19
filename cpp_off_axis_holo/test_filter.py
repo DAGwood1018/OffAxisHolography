@@ -13,16 +13,16 @@ PIXEL_SIZE = 3.45 * 1e-6  # Pixel size of camera
 fringes = np.load(filepath)
 
 filter = OffAxFilter(fringes, WAVELENGTH, PIXEL_SIZE, optimize=True, visualize=True)
+
 c_filter, unwrap = filter(threads=4)
 print("Threads Used: ", c_filter.threads_in_use())
 
-phase = c_filter(fringes.astype('uint8'))
-c_filter.show_input()
-c_filter.show_filtered()
-c_filter.show_output()
 
-cv2.imshow('phase_unwrap', format_img(phase))
-cv2.waitKey(0)
+print(np.nonzero(c_filter.mask()))
+
+c_filter.write(fringes.flatten())
+c_filter.a()
+c_filter.show_input()
 
 '''
 c_filter.forwards()
