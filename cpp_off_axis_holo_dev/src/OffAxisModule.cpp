@@ -1,5 +1,4 @@
-#include "OffAxFilter.h"
-#include <opencv2/opencv.hpp>
+#include "OffAxisModule.h"
 
 using namespace std;
 namespace py = pybind11;
@@ -8,47 +7,20 @@ namespace py = pybind11;
 /**
 * @brief Initialize off-axis filter object.
 **/
-OffAxFilter::OffAxFilter(py::array_t<int, py::array::c_style | py::array::forcecast> n, py::array_t<int, py::array::c_style | py::array::forcecast> roi, 
+OffAxisModule::OffAxisModule(py::array_t<int, py::array::c_style | py::array::forcecast> n, py::array_t<int, py::array::c_style | py::array::forcecast> roi, 
                         py::array_t<double, py::array::c_style | py::array::forcecast> mask, py::array_t<complex<double>, py::array::c_style | py::array::forcecast> ref,
                         unsigned nthreads, unsigned flags) {
 
-    // Access numpy array
-    py::buffer_info sz_buf = n.request();
-    if (sz_buf.size != 2) {
-        throw py::value_error("Expect 2D shape.");
-    }
-
-    py::buffer_info roi_buf = roi.request();
-    if (roi_buf.size != 4) {
-        throw py::value_error("Expect (x, y, dx, dy) for ROI.");
-    }
     
-    this->shape = static_cast<int *>(sz_buf.ptr);
-    this->roi = static_cast<int *>(roi_buf.ptr);
-
-    py::buffer_info mask_buf = mask.request();
-    this->mask = static_cast<double *>(mask_buf.ptr);
-
-    py::buffer_info ref_buf = ref.request();
-    this->ref = static_cast<complex<double> *>(ref_buf.ptr);
-
-    this->rank = 2;
-    this->N = shape[0] * shape[1];
-    this->flags = flags;
-    this->nthreads = nthreads;
-    this->alloc();
+    this->filter = new OffAxFilter(n, roi, mask, ref, nthreads, flags);
 }
 
 /**
- * @brief Free memory for off-axis filter.
+ * @brief Free memory for off-axis filter and phase unwrapper.
 **/
-OffAxFilter::~OffAxFilter() {
-    fftw_free(this->a);
-    fftw_free(this->b);
-    fftw_free(this->c);
-    fftw_free(this->d);
-    fftw_destroy_plan(this->fft_forward);
-    fftw_destroy_plan(this->fft_backward);
+OffAxisModule::~OffAxisModule() {
+    delete this->filter;
+    delete this->unwrap;
 }
 
 /**

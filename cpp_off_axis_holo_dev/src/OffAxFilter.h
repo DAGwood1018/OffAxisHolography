@@ -3,7 +3,6 @@
 
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
-#include <opencv2/opencv.hpp>
 #include <complex.h>
 #include <fftw3.h>
 #include <vector>
@@ -21,14 +20,10 @@ public:
     
     py::array_t<double> __call__(py::array_t<uint8_t, py::array::c_style | py::array::forcecast> fringes);
     bool filter(py::array_t<uint8_t, py::array::c_style | py::array::forcecast> fringes);
-    void forwards();
-    void backwards();
     int size();
     int threads_in_use();
-
     void show_input();
     void show_output();
-    void show_filtered();
 
 protected:
 
@@ -50,8 +45,10 @@ protected:
     double *mask; // Mask to apply in the Fourier plane.
 
     void alloc();
+    void forwards();
     void crop();
-    void show(fftw_complex *arr, bool cropped, bool log_scale);
+    void backwards();
+    void show(fftw_complex *arr, bool cropped);
     bool write(py::array_t<uint8_t, py::array::c_style | py::array::forcecast> arr);
 };
 

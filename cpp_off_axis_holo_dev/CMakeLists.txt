@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.12)
-project(holo_lib)
+project(holography_bindings)
 
 # Find Python Dev
 find_package(Python COMPONENTS Development)
@@ -23,14 +23,30 @@ include_directories(${PYBIND11_DIR}/include)
 # Include OpenCV headers
 include_directories(${OpenCV_INCLUDE_DIRS})
 
+# <OffAxFilter>:
+
 # Add the pybind11 source files
-add_library(holo_lib MODULE src/OffAxFilter.cpp src/bind.cpp)
+add_library(off_axis_filter MODULE src/OffAxFilter.cpp)
 
 # Set filename
-set_target_properties(holo_lib PROPERTIES PREFIX "" OUTPUT_NAME "holo_lib" SUFFIX ".so")
+set_target_properties(off_axis_filter PROPERTIES PREFIX "" OUTPUT_NAME "off_axis_filter" SUFFIX ".so")
 
 # Set the output directory for the compiled module
-set_target_properties(holo_lib PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(off_axis_filter PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Set needed libraries
-target_link_libraries(holo_lib PRIVATE -lfftw3 -lfftw3_threads -lm ${OpenCV_LIBS})
+target_link_libraries(off_axis_filter PRIVATE -lfftw3 -lfftw3_threads -lm ${OpenCV_LIBS})
+
+# <PhaseUnwrap>:
+
+# Add the pybind11 source files
+add_library(phase_unwrap MODULE src/PhaseUnwrap.cpp)
+
+# Set filename
+set_target_properties(phase_unwrap PROPERTIES PREFIX "" OUTPUT_NAME "phase_unwrap" SUFFIX ".so")
+
+# Set the output directory for the compiled module
+set_target_properties(phase_unwrap PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Set needed libraries
+target_link_libraries(phase_unwrap PRIVATE -lfftw3 -lfftw3_threads -lm ${OpenCV_LIBS})
