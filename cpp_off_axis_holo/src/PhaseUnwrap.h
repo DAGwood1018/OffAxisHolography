@@ -3,6 +3,8 @@
 
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
+#include <pybind11/eigen.h>
+#include <Eigen/Dense>
 #include <complex.h>
 #include <fftw3.h>
 #include <vector>
@@ -10,9 +12,7 @@
 //using namespace Eigen;
 
 // Helper functions for phase unwrapping
-double wrap_to_pi(double angle);
-int diff(int* k1, int* k2, size_t N);
-void offset_phases(double* phase_wrap, double* phase_unwrap, int* k, size_t N);
+Eigen::MatrixXd wrap_to_pi(const Eigen::MatrixXd& angles);
 
 using namespace std;
 namespace py = pybind11;
@@ -20,18 +20,16 @@ namespace py = pybind11;
 class PhaseUnwrap {
 
 public:
+    PhaseUnwrap(int N, int M, unsigned nthreads, unsigned flags);
     PhaseUnwrap(py::array_t<int, py::array::c_style | py::array::forcecast> n, unsigned nthreads, unsigned flags);
     ~PhaseUnwrap();
 
-    vector<double> unwrap(vector<double> *phase_wrap);
-    py::array_t<double> unwrap(py::array_t<double, py::array::c_style | py::array::forcecast> phase_wrap);
-    void execute();
-    void forwards();
-    void backwards();
+    py::array_t<double> __call__(py::array_t<double, py::array::c_style | py::array::forcecast> phase_wrap);
+    bool unwrap(py::array_t<double, py::array::c_style | py::array::forcecast> phase_wrap);
     int size();
     int threads_in_use();
-
-    void to_string();
+    void show_wrapped();
+    void show_unwrapped();
 
 protected:
 
@@ -45,17 +43,14 @@ protected:
 
     int N; // Number of elements.
     int* shape; // Shape of input.
-    double* phase_wrap;
-    double* phase_unwrap;
-    double* residual_wrap;
-    double* residual_unwrap;
-    double* phi;
-    int* k1;
-    int* k2;
+    Eigen::MatrixXd* phase_wrap;
+    Eigen::MatrixXd* phase_unwrap;
 
     void alloc();
-    void solve(double* in, double* out);
-    bool write(vector<double> *vec);
+    void show(Eigen::MatrixXd* phase);
+    void forwards(double *a);
+    void backwards(double *a);
+    void solve(Eigen::MatrixXd& in, Eigen::MatrixXd& out);
     bool write(py::array_t<double, py::array::c_style | py::array::forcecast> arr);
 };
 

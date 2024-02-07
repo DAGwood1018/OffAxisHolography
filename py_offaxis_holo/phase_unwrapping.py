@@ -41,6 +41,7 @@ class PhaseUnwrap(REDFT):
         phase_unwrap = phase_wrap + 2 * K2 * np.pi
         residue = wrap_to_pi(phase_unwrap - phi1)
 
+        i = 0
         while np.sum(np.sum(np.abs(K2 - K1))) > 0:
             K1 = K2
             phic = self.unwrap(residue)
@@ -49,6 +50,8 @@ class PhaseUnwrap(REDFT):
             K2 = np.round((phi1 - phase_wrap) / (2 * np.pi))  # calculate integer K
             phase_unwrap = phase_wrap + 2 * K2 * np.pi
             residue = wrap_to_pi(phase_unwrap - phi1)
+            i+=1
+        print(i)
         return phase_unwrap - phase_unwrap.min() if self._zero else phase_unwrap
 
     def _solve(self, rho):

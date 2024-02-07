@@ -32,5 +32,5 @@ scripts/debug_tilt_compensation.py
 /cpp_offaxis_holo/dft_test
 /cpp_offaxis_holo/main.o
 /cpp_offaxis_holo/DFT
-/cpp_off_axis_holo_dev/build/CMakeFiles/holo_lib.dir/src/bind.cpp.o
-/cpp_off_axis_holo_dev/build/CMakeFiles/holo_lib.dir/src/bind.cpp.o.d
+/cpp_off_axis_holo/build/CMakeFiles/holo_lib.dir/src/bind.cpp.o
+/cpp_off_axis_holo/build/CMakeFiles/holo_lib.dir/src/bind.cpp.o.d

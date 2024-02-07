@@ -1,6 +1,6 @@
 from abc import ABC
 import numpy as np
-import holo_lib
+from off_axis_filter import OffAxFilter
 from scipy.optimize import minimize
 from holo_utils import reference_wave
 from holo_utils import gridspace
@@ -9,7 +9,7 @@ from warnings import warn
 import cv2
 
 
-class OffAxMasking(ABC):
+class OffAxisMask(ABC):
 
     def __init__(self, M, N):
         self._dims = (M, N)
@@ -109,7 +109,7 @@ class OffAxMasking(ABC):
         return a[m_min:m_max + 1, n_min:n_max + 1]
 
 
-class OffAxFilter(OffAxMasking):
+class AlignOffAxis(OffAxisMask):
 
     def __init__(self, fringes, wl, sz, radius=None, optimize=False,
                  visualize=False, opts={}, window_fcn=np.ones, params={}):
@@ -129,11 +129,8 @@ class OffAxFilter(OffAxMasking):
         # Window seemed to be corrupted
 
     def __call__(self, threads=1, flags=0):
-        roi = self.roi
-        filter = holo_lib.OffAxFilter(np.array([self._dims[0], self._dims[1]], dtype=int), np.array(roi, dtype=int),
-                                    self._mask, self._ref, threads, flags)
-        unwrapper = holo_lib.PhaseUnwrap(np.array([roi[2], roi[3]], dtype=int), threads, flags)
-        return filter, unwrapper
+        filter = OffAxFilter(np.array(self._dims, dtype=int), np.array(self.roi, dtype=int), self._mask.astype(np.double), self._ref.astype(np.complex128), threads, flags)
+        return filter
 
     def _calc_tilt(self, f1):
         """
