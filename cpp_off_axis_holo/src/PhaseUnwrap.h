@@ -20,16 +20,17 @@ namespace py = pybind11;
 class PhaseUnwrap {
 
 public:
-    PhaseUnwrap(int N, int M, unsigned nthreads, unsigned flags);
+    PhaseUnwrap(int M, int N, unsigned nthreads, unsigned flags);
     PhaseUnwrap(py::array_t<int, py::array::c_style | py::array::forcecast> n, unsigned nthreads, unsigned flags);
     ~PhaseUnwrap();
 
     py::array_t<double> __call__(py::array_t<double, py::array::c_style | py::array::forcecast> phase_wrap);
-    bool unwrap(py::array_t<double, py::array::c_style | py::array::forcecast> phase_wrap);
+    Eigen::MatrixXd operator()(Eigen::MatrixXd& phase_wrap);
+    void unwrap();
     int size();
     int threads_in_use();
-    void show_wrapped();
-    void show_unwrapped();
+    void show_input();
+    void show_output();
 
 protected:
 
@@ -41,8 +42,8 @@ protected:
     fftw_plan dct_forward; // FFTW plan for dct
     fftw_plan dct_backward; // FFTW plan for idct
 
-    int N; // Number of elements.
-    int* shape; // Shape of input.
+    int M; // Number rows
+    int N; // Number of columns.
     Eigen::MatrixXd* phase_wrap;
     Eigen::MatrixXd* phase_unwrap;
 
@@ -51,6 +52,7 @@ protected:
     void forwards(double *a);
     void backwards(double *a);
     void solve(Eigen::MatrixXd& in, Eigen::MatrixXd& out);
+    bool write(Eigen::MatrixXd& mat);
     bool write(py::array_t<double, py::array::c_style | py::array::forcecast> arr);
 };
 

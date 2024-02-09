@@ -1,7 +1,7 @@
-#ifndef FILTER_H
-#define FILTER_H
+#ifndef OFFAXHOLO_H
+#define OFFAXHOLO_H
 
-#include "OffAxFilter.h"
+#include "OffAxisFilter.h"
 #include "PhaseUnwrap.h"
 
 using namespace std;
@@ -17,7 +17,8 @@ public:
     
     py::array_t<double> __call__(py::array_t<uint8_t, py::array::c_style | py::array::forcecast> fringes);
 
-    int size();
+    int input_size();
+    int output_size(); 
     int threads_in_use();
     void show_filter_input();
     void show_filter_output();
@@ -25,7 +26,7 @@ public:
     void show_phase_output();
 
 protected:
-    OffAxFilter *filter;
+    OffAxisFilter *filter;
     PhaseUnwrap *unwrap;
 };
 

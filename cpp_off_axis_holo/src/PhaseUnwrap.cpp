@@ -23,10 +23,9 @@ Eigen::MatrixXd wrap_to_pi(const Eigen ::MatrixXd& angles) {
 /**
 * @brief Initialize phase unwrapping object.
 **/
-PhaseUnwrap::PhaseUnwrap(int N, int M, unsigned nthreads, unsigned flags) {
-    int shape[2] = {N, M};
-    this->shape = shape;
-    this->N = this->shape[0] * this->shape[1]; 
+PhaseUnwrap::PhaseUnwrap(int M, int N, unsigned nthreads, unsigned flags) {
+    this->M = M;
+    this->N = N; 
     this->flags = flags;
     this->nthreads = nthreads;
     this->alloc();
@@ -42,9 +41,10 @@ PhaseUnwrap::PhaseUnwrap(py::array_t<int, py::array::c_style | py::array::forcec
     if (sz_buf.size != 2) {
         throw py::value_error("Expect 2D shape.");
     }
+    int* shape = static_cast<int *>(sz_buf.ptr);
 
-    this->shape = static_cast<int *>(sz_buf.ptr);
-    this->N = this->shape[0] * this->shape[1]; 
+    this->M = shape[0];
+    this->N = shape[1]; 
     this->flags = flags;
     this->nthreads = nthreads;
     this->alloc();
@@ -71,19 +71,19 @@ void PhaseUnwrap::alloc() {
 
     // Initiate multithreading
     if (fftw_init_threads()==0) {
-        printf("Error in initiating multi-threading.");
+        cout << "Error in initiating multi-threading." << endl;
     } else {
         fftw_plan_with_nthreads(this->nthreads);
     }
 
     this->nthreads = fftw_planner_nthreads();
-    this->a = (double *) fftw_alloc_real(this->N);
-    this->b = (double *) fftw_alloc_real(this->N);
-    this->dct_forward = fftw_plan_r2r_2d(this->shape[0], this->shape[1], this->a, this->b, FFTW_REDFT10, FFTW_REDFT10, this->flags);
-    this->dct_backward = fftw_plan_r2r_2d(this->shape[0], this->shape[1], this->b, this->a, FFTW_REDFT01, FFTW_REDFT01, this->flags);
+    this->a = (double *) fftw_alloc_real(this->size());
+    this->b = (double *) fftw_alloc_real(this->size());
+    this->dct_forward = fftw_plan_r2r_2d(this->M, this->N, this->a, this->b, FFTW_REDFT10, FFTW_REDFT10, this->flags);
+    this->dct_backward = fftw_plan_r2r_2d(this->M, this->N, this->b, this->a, FFTW_REDFT01, FFTW_REDFT01, this->flags);
 
-    this->phase_wrap = new Eigen::MatrixXd(this->shape[0], this->shape[1]);
-    this->phase_unwrap = new Eigen::MatrixXd(this->shape[0], this->shape[1]);
+    this->phase_wrap = new Eigen::MatrixXd(this->M, this->N);
+    this->phase_unwrap = new Eigen::MatrixXd(this->M, this->N);
 }
 
 
@@ -91,7 +91,7 @@ void PhaseUnwrap::alloc() {
  * @brief Return the total number of elements.
 **/
 int PhaseUnwrap::size() {
-    return this->N;
+    return this->M * this->N;
 }
 
 
@@ -108,17 +108,18 @@ int PhaseUnwrap::threads_in_use() {
  * @param phase Numpy ndarray.
 **/
 py::array_t<double> PhaseUnwrap::__call__(py::array_t<double, py::array::c_style | py::array::forcecast> phase_wrap) {
-    bool res = this->unwrap(phase_wrap);
-    //this->test(phase_wrap);
-    size_t shape[2] = {static_cast<size_t>(this->shape[0]), static_cast<size_t>(this->shape[1])};
+    bool res = this->write(phase_wrap);
+    this->show_input();
+    size_t shape[2] = {static_cast<size_t>(this->M), static_cast<size_t>(this->N)};
     py::array_t<double> phase_unwrap(shape);
     py::buffer_info buffer = phase_unwrap.request();
     double* ptr = static_cast<double *>(buffer.ptr);
     
     if (res) {
-        memcpy(ptr, this->phase_unwrap->data(), sizeof(double)*this->N);
+        this->unwrap();
+        memcpy(ptr, this->phase_unwrap->data(), sizeof(double)*this->size());
     } else {
-        for (auto i = 0; i < this->N; i++) {
+        for (auto i = 0; i < this->size(); i++) {
             ptr[i] = 0;
         } 
     }
@@ -127,53 +128,62 @@ py::array_t<double> PhaseUnwrap::__call__(py::array_t<double, py::array::c_style
 }
 
 
-bool PhaseUnwrap::unwrap(py::array_t<double, py::array::c_style | py::array::forcecast> phase_wrap) {
+Eigen::MatrixXd PhaseUnwrap::operator()(Eigen::MatrixXd& phase_wrap) {
     bool res = this->write(phase_wrap);
     
-    // Unwrap given phase
+    Eigen::MatrixXd phase_unwrap = Eigen::MatrixXd::Zero(this->M, this->N);
     if (res) {
+        this->unwrap();
+        memcpy(phase_unwrap.data(), this->phase_unwrap->data(), sizeof(double)*this->size());
+    }
 
-        // Initialize needed matrices
-        Eigen::MatrixXd wrapped_phase(this->shape[0], this->shape[1]);
-        Eigen::MatrixXd unwrapped_phase(this->shape[0], this->shape[1]);
-        Eigen::MatrixXd phi(this->shape[0], this->shape[1]);
-        Eigen::MatrixXd wrapped_residual(this->shape[0], this->shape[1]);
-        Eigen::MatrixXd unwrapped_residual(this->shape[0], this->shape[1]);
-        Eigen::MatrixXd K1(this->shape[0], this->shape[1]);
-        Eigen::MatrixXd K2(this->shape[0], this->shape[1]);
+    return phase_unwrap;
+}
 
-        // Copy input to working matrix
-        memcpy(wrapped_phase.data(), this->phase_wrap->data(), sizeof(double)*this->N);
 
-        this->solve(wrapped_phase, phi);
-        phi.array() += wrapped_phase.mean() - phi.mean();  // adjust piston
+void PhaseUnwrap::unwrap() {
+    // Initialize needed matrices
+    Eigen::MatrixXd wrapped_phase(this->M, this->N); 
+    Eigen::MatrixXd unwrapped_phase(this->M, this->N);
+    Eigen::MatrixXd phi(this->M, this->N);
+    Eigen::MatrixXd wrapped_residual(this->M, this->N);
+    Eigen::MatrixXd unwrapped_residual(this->M, this->N);
+    Eigen::MatrixXd K1(this->M, this->N);
+    Eigen::MatrixXd K2(this->M, this->N);
+    
+    // Copy input to working matrix
+    memcpy(wrapped_phase.data(), this->phase_wrap->data(), sizeof(double)*this->size());
 
-        K1 = ((phi - wrapped_phase) / (2 * M_PI)).array().round();  // calculate integer K
-        unwrapped_phase = wrapped_phase + 2 * K1 * M_PI;
-        wrapped_residual = wrap_to_pi(unwrapped_phase - phi);
+    this->solve(wrapped_phase, phi);
+    phi.array() += wrapped_phase.mean() - phi.mean();  // adjust piston
 
+    K1 = ((phi - wrapped_phase) / (2 * M_PI)).array().round();  // calculate integer K
+    unwrapped_phase = wrapped_phase + 2 * K1 * M_PI;
+    wrapped_residual = wrap_to_pi(unwrapped_phase - phi);
+
+    this->solve(wrapped_residual, unwrapped_residual);
+    phi += unwrapped_residual;
+    phi.array() += wrapped_phase.mean() - phi.mean();  // adjust piston
+
+    K2 = ((phi - wrapped_phase) / (2 * M_PI)).array().round();  // calculate integer K
+    unwrapped_phase = wrapped_phase + 2 * K2 * M_PI;
+    wrapped_residual = wrap_to_pi(unwrapped_phase - phi);
+
+    int i=0;
+    while (((K2 - K1).cwiseAbs()).sum() > 0) {
+        K1 = K2;
         this->solve(wrapped_residual, unwrapped_residual);
         phi += unwrapped_residual;
         phi.array() += wrapped_phase.mean() - phi.mean();  // adjust piston
-
         K2 = ((phi - wrapped_phase) / (2 * M_PI)).array().round();  // calculate integer K
         unwrapped_phase = wrapped_phase + 2 * K2 * M_PI;
         wrapped_residual = wrap_to_pi(unwrapped_phase - phi);
-
-        while (((K2 - K1).cwiseAbs()).sum() > 0) {
-            K1 = K2;
-            this->solve(wrapped_residual, unwrapped_residual);
-            phi += unwrapped_residual;
-            phi.array() += wrapped_phase.mean() - phi.mean();  // adjust piston
-            K2 = ((phi - wrapped_phase) / (2 * M_PI)).array().round();  // calculate integer K
-            unwrapped_phase = wrapped_phase + 2 * K2 * M_PI;
-            wrapped_residual = wrap_to_pi(unwrapped_phase - phi);
-        }
-
-        // Copy result to class property
-        memcpy(this->phase_unwrap->data(), unwrapped_phase.data(), sizeof(double)*this->N);
+        i++;
     }
-    return res;
+
+    // Copy result to class property
+    memcpy(this->phase_unwrap->data(), unwrapped_phase.data(), sizeof(double)*this->size());
+    this->show_output();
 }
 
 
@@ -197,13 +207,13 @@ void PhaseUnwrap::solve(Eigen::MatrixXd& in, Eigen::MatrixXd& out) {
 
     // TODO double check normalization
     double denom;
-    for (auto i = 0; i < this->shape[0]; ++i) {
-        for (auto j = 0; j < this->shape[1]; ++j) {
+    for (auto i = 0; i < this->M; ++i) {
+        for (auto j = 0; j < this->N; ++j) {
             if (i==0 && j==0) {
                 this->b[0] = 0;
             } else {
-                denom = 2 * (cos(M_PI * i / this->shape[0]) + cos(M_PI * j / this->shape[1]) - 2);
-                this->b[i * this->shape[0] + j] /=  4 * denom * N; // Achieves the proper normalization
+                denom = 2 * (cos(M_PI * i / this->M) + cos(M_PI * j / this->N) - 2);
+                this->b[i * this->M + j] /=  4 * denom * this->size(); // Achieves the proper normalization
             }
         }
     } 
@@ -212,11 +222,12 @@ void PhaseUnwrap::solve(Eigen::MatrixXd& in, Eigen::MatrixXd& out) {
     this->backwards(out.data()); 
 }
 
+
 /**
  * @brief Executes plan for DCT transform.
 **/
 void PhaseUnwrap::forwards(double* a) {
-    memcpy(this->a, a, sizeof(double)*this->N);
+    memcpy(this->a, a, sizeof(double)*this->size());
     fftw_execute(this->dct_forward);
 }
 
@@ -226,7 +237,7 @@ void PhaseUnwrap::forwards(double* a) {
 **/
 void PhaseUnwrap::backwards(double* a) {
     fftw_execute(this->dct_backward);
-    memcpy(a, this->a, sizeof(double)*this->N);
+    memcpy(a, this->a, sizeof(double)*this->size());
 }
 
 
@@ -244,10 +255,22 @@ bool PhaseUnwrap::write(py::array_t<double, py::array::c_style | py::array::forc
     // Length of the array
     unsigned size = buf.size;
 
-    if (size == this->N) {
-       memcpy(this->phase_wrap->data(), ptr, sizeof(double)*this->N);
+    if (size == this->size()) {
+       memcpy(this->phase_wrap->data(), ptr, sizeof(double)*this->size());
        return true;
     } else {
+        cerr << "Given input had an incompatible size." << endl;
+        return false;
+    }
+}
+
+
+bool PhaseUnwrap::write(Eigen::MatrixXd& mat) {
+    if (mat.size() == this->size()) {
+       memcpy(this->phase_wrap->data(), mat.data(), sizeof(double)*this->size());
+       return true;
+    } else {
+        cerr << "Given input had an incompatible size." << endl;
         return false;
     }
 }
@@ -260,7 +283,7 @@ void PhaseUnwrap::show(Eigen::MatrixXd* mat) {
     Eigen::Matrix<uint8_t, Eigen::Dynamic, Eigen::Dynamic> img_data = (255.0*(mat->array() - min_val)/(max_val-min_val)).cast<uint8_t>();
 
     // Create an OpenCV Mat object
-    cv::Mat img_mat(this->shape[0], this->shape[1], CV_8UC1, img_data.data());
+    cv::Mat img_mat(this->M, this->N, CV_8UC1, img_data.data());
 
     // Display the image using OpenCV
     cv::imshow("Image", img_mat);
@@ -268,12 +291,12 @@ void PhaseUnwrap::show(Eigen::MatrixXd* mat) {
 }
 
 
-void PhaseUnwrap::show_wrapped() {
+void PhaseUnwrap::show_input() {
     this->show(this->phase_wrap);
 }
 
 
-void PhaseUnwrap::show_unwrapped() {
+void PhaseUnwrap::show_output() {
     this->show(this->phase_unwrap);
 }
 
@@ -283,10 +306,9 @@ PYBIND11_MODULE(phase_unwrap, m) {
         py::class_<PhaseUnwrap>(m, "PhaseUnwrap")
                 .def(py::init<py::array_t<int, py::array::c_style | py::array::forcecast>, unsigned, unsigned>())
                 .def("__call__", static_cast<py::array_t<double> (PhaseUnwrap::*)(py::array_t<double, py::array::c_style | py::array::forcecast>)>(&PhaseUnwrap::__call__))
-                .def("unwrap", static_cast<bool (PhaseUnwrap::*)(py::array_t<double, py::array::c_style | py::array::forcecast>)>(&PhaseUnwrap::unwrap))
                 .def("size", &PhaseUnwrap::size)
                 .def("threads_in_use", &PhaseUnwrap::threads_in_use)
-                .def("show_wrapped", &PhaseUnwrap::show_wrapped)
-                .def("show_unwrapped", &PhaseUnwrap::show_unwrapped)
+                .def("show_input", &PhaseUnwrap::show_input)
+                .def("show_output", &PhaseUnwrap::show_output)
                 ;
 }

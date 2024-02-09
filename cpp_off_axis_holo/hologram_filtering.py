@@ -1,6 +1,6 @@
 from abc import ABC
 import numpy as np
-from off_axis_filter import OffAxFilter
+from off_axis_module import OffAxisModule
 from scipy.optimize import minimize
 from holo_utils import reference_wave
 from holo_utils import gridspace
@@ -129,8 +129,8 @@ class AlignOffAxis(OffAxisMask):
         # Window seemed to be corrupted
 
     def __call__(self, threads=1, flags=0):
-        filter = OffAxFilter(np.array(self._dims, dtype=int), np.array(self.roi, dtype=int), self._mask.astype(np.double), self._ref.astype(np.complex128), threads, flags)
-        return filter
+        phase_extract = OffAxisModule(np.array(self._dims, dtype=int), np.array(self.roi, dtype=int), self._mask.astype(np.double), self._ref.astype(np.complex128), threads, flags)
+        return phase_extract
 
     def _calc_tilt(self, f1):
         """

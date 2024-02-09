@@ -20,20 +20,45 @@ print("Threads Used: ", filter.threads_in_use())
 
 t0 = time.time()
 phase = filter(fringes.astype('uint8'))
+dt = time.time() - t0
+print("Runtime: ", dt)
+
+#filter = align(threads=1)
+phase1 = filter(fringes.astype('uint8'))
+
+#filter = align(threads=1)
+phase2 = filter(fringes.astype('uint8'))
+
+'''
 filter.show_input()
 filter.show_output()
 
 # Instantiating this right after the filter breaks it for some reason.
 # Cannot use filter class after instantiating the unwrapper.
 unwrap = PhaseUnwrap(np.array([align.roi[2], align.roi[3]], dtype=int), 1, 0)
+print(unwrap.size())
+print(phase.size)
 
 # TODO Input not being copied correctly. 
 result = unwrap(phase)
 dt = time.time() - t0
 print("Runtime: ", dt)
+'''
 
 path = os.getcwd()
 plt.figure()
-plt.imshow(result, cmap='rainbow')
+plt.imshow(phase, cmap='rainbow')
 plt.colorbar()
 plt.savefig(os.path.join(path, "phase.png"))
+
+path = os.getcwd()
+plt.figure()
+plt.imshow(phase1, cmap='rainbow')
+plt.colorbar()
+plt.savefig(os.path.join(path, "phase1.png"))
+
+path = os.getcwd()
+plt.figure()
+plt.imshow(phase2, cmap='rainbow')
+plt.colorbar()
+plt.savefig(os.path.join(path, "phase2.png"))

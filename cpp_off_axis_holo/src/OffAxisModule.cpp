@@ -1,8 +1,8 @@
 #include "OffAxisModule.h"
+#include<iostream>
 
 using namespace std;
 namespace py = pybind11;
-
 
 /**
 * @brief Initialize off-axis filter object.
@@ -11,8 +11,14 @@ OffAxisModule::OffAxisModule(py::array_t<int, py::array::c_style | py::array::fo
                         py::array_t<double, py::array::c_style | py::array::forcecast> mask, py::array_t<complex<double>, py::array::c_style | py::array::forcecast> ref,
                         unsigned nthreads, unsigned flags) {
 
+    py::buffer_info roi_buf = roi.request();
+    if (roi_buf.size != 4) {
+        throw py::value_error("Expect (x, y, dx, dy) for ROI.");
+    }
+    int* ROI = static_cast<int *>(roi_buf.ptr);
     
-    this->filter = new OffAxFilter(n, roi, mask, ref, nthreads, flags);
+    this->filter = new OffAxisFilter(n, roi, mask, ref, nthreads, flags);
+    this->unwrap = new PhaseUnwrap(ROI[2], ROI[3], nthreads, flags);
 }
 
 /**
@@ -23,225 +29,70 @@ OffAxisModule::~OffAxisModule() {
     delete this->unwrap;
 }
 
-/**
- * @brief Allocate resources for Fourier transforms.
-**/
-void OffAxFilter::alloc() {
-    // Initiate multithreading
-    if (fftw_init_threads()==0) {
-        printf("Error in initiating multi-threading.");
-    } else {
-        fftw_plan_with_nthreads(this->nthreads);
-    }
-
-    int roi_shape[2] = {this->roi[2], this->roi[3]};
-    this->nthreads = fftw_planner_nthreads();
-    this->a = (fftw_complex *) fftw_alloc_complex(this->N);
-    this->b = (fftw_complex *) fftw_alloc_complex(this->N);
-    this->c = (fftw_complex *) fftw_alloc_complex(this->roi[2]*this->roi[3]);
-    this->d = (fftw_complex *) fftw_alloc_complex(this->roi[2]*this->roi[3]);
-    this->fft_forward = fftw_plan_dft(this->rank, this->shape, this->a, this->b, FFTW_FORWARD, this->flags);
-    this->fft_backward = fftw_plan_dft(this->rank, roi_shape, this->c, this->d, FFTW_BACKWARD, this->flags);
-}
-
 
 /**
- * @brief Python call function that filters interfence pattern and returns numpy array.
+ * @brief Python call function that filters interfence pattern, unwraps the phase, and returns a numpy array.
  * @param fringes Numpy ndarray.
 **/
-py::array_t<double> OffAxFilter::__call__(py::array_t<uint8_t, py::array::c_style | py::array::forcecast> fringes) {
-    bool res = this->filter(fringes);
-    size_t shape[2] = {static_cast<size_t>(this->roi[2]), static_cast<size_t>(this->roi[3])};
-    complex<double> c;
-    py::array_t<double> arr(shape);
-    py::buffer_info buffer = arr.request();
-    double* ptr = static_cast<double *>(buffer.ptr);
-    
-    if (res) {
-        for (auto i = 0; i < this->roi[2]*this->roi[3]; i++) {
-            c.real(this->d[i][0]);
-            c.imag(this->d[i][1]);
-            ptr[i] = arg(c);
-        } 
-    } else {
-        for (auto i = 0; i < this->roi[2]*this->roi[3]; i++) {
-            ptr[i] = 0;
-        } 
-    }
-    return arr;
-}
-
-
-
-/**
- * @brief Return the total number of elements.
-**/
-int OffAxFilter::size() {
-    return this->N;
+py::array_t<double> OffAxisModule::__call__(py::array_t<uint8_t, py::array::c_style | py::array::forcecast> fringes) {
+    py::array_t<double> phase_wrap = this->filter->__call__(fringes);
+    return this->unwrap->__call__(phase_wrap);
 }
 
 
 /**
- * @brief Returns the number of threads in use.
+ * @brief Return the total element count of an input.
 **/
-int OffAxFilter::threads_in_use() {
-    return this->nthreads;
+int OffAxisModule::input_size() {
+    return this->filter->size();
 }
 
 
 /**
- * @brief Filter a provided interference pattern.
- * @param fringes Numpy ndarray.
+ * @brief Return the total element count of an output.
 **/
-bool OffAxFilter::filter(py::array_t<uint8_t, py::array::c_style | py::array::forcecast> fringes) {
-    bool res = this->write(fringes);
-    if (res) {
-        this->forwards();
-        this->crop();
-        this->backwards();
-    }
-    return res;
+int OffAxisModule::output_size() {
+    return this->unwrap->size();
 }
 
 
 /**
- * @brief Executes plan for FFT transform.
+ * @brief Returns the total number of threads in use.
 **/
-void OffAxFilter::forwards() {
-    fftw_execute(this->fft_forward);
-    for (auto i=0; i<this->N; i++) {
-        this->b[i][0] *= this->mask[i];
-        this->b[i][1] *= this->mask[i];
-    }
+int OffAxisModule::threads_in_use() {
+    return this->filter->threads_in_use() + this->unwrap->threads_in_use();
 }
 
 
-/**
- * @brief Executes plan for IFFT transform.
-**/
-void OffAxFilter::backwards() {
-    fftw_execute(this->fft_backward);
-    for (auto i=0; i<this->roi[2]*this->roi[3]; i++) {
-        this->d[i][0] /= this->N;
-        this->d[i][1] /= this->N;
-    }
+void OffAxisModule::show_filter_input() {
+    this->filter->show_input();
+}
+
+void OffAxisModule::show_filter_output() {
+    this->filter->show_output();
+}
+
+void OffAxisModule::show_phase_input() {
+    this->unwrap->show_input();
+}
+
+void OffAxisModule::show_phase_output() {
+    this->unwrap->show_output();
 }
 
 
-/**
- * @brief Crop transformed array to the ROI.
-**/
-void OffAxFilter::crop() {
-    int k, l=0;
-    int x0 = this->roi[0];
-    int xend = this->roi[0] + this->roi[2];
-    int y0 = this->roi[1];
-    int yend = this->roi[1] + this->roi[3];
-
-    for (auto i=y0; i<yend; i++) {
-        for (auto j=x0; j<xend; j++) {
-            k = j*this->shape[1] + i;
-            this->c[l][0] = this->b[k][0];
-            this->c[l][1] = this->b[k][1];
-            l += 1;
-        }
-    }
-}
-
-
-/**
- * @brief Writes numpy array to memory.
- * @param arr Numpy ndarray.
-**/
-bool OffAxFilter::write(py::array_t<uint8_t, py::array::c_style | py::array::forcecast> arr) {
-    // Access the underlying buffer of the NumPy array
-    py::buffer_info buf = arr.request();
-    
-    // Pointer to the data
-    uint8_t *ptr = static_cast<uint8_t *>(buf.ptr);
-    
-    // Length of the array
-    unsigned size = buf.size;
-
-    if (size == this->N) {
-        for (auto i=0; i<this->N; i++) {
-            this->a[i][0] = this->ref[i].real() * static_cast<double>(ptr[i]);
-            this->a[i][1] = this->ref[i].imag() * static_cast<double>(ptr[i]);
-        }
-        return true;
-    } else {
-        return false;
-    }
-}
-
-
-void OffAxFilter::show(fftw_complex *arr, bool cropped) {
-    int N;
-    int x;
-    int y;
-    if (cropped) {
-        N = this->roi[2]*this->roi[3];
-        x = this->roi[2];
-        y = this->roi[3];
-    } else {
-        N = this->N;
-        x = this->shape[0];
-        y = this->shape[1];
-    }
-
-    complex<double> c;
-    double* A = new double[N];
-    c.real(arr[0][0]);
-    c.imag(arr[0][1]);
-    A[0] = pow(abs(c), 2);
-
-    double min_val = A[0];
-    double max_val = A[0];
-    for (auto i = 1; i < N; i++) {
-        c.real(arr[i][0]);
-        c.imag(arr[i][1]);
-        A[i] = pow(abs(c), 2);
-        
-        if (A[i] > max_val) max_val = A[i];
-        if (A[i] < min_val) min_val = A[i];
-    }
-
-    uint8_t* img_data = new uint8_t[N];
-    for (auto i = 0; i < N; ++i) {
-        img_data[i] = static_cast<uint8_t>(255.0 * (A[i] - min_val) / (max_val - min_val));
-    }
-
-    // Create an OpenCV Mat object
-    cv::Mat img_mat(x, y, CV_8UC1, img_data);
-
-    // Display the image using OpenCV
-    cv::imshow("Image", img_mat);
-    cv::waitKey(0);
-
-    delete[] A;
-    delete[] img_data;
-}
-
-
-void OffAxFilter::show_input() {
-    this->show(this->a, false);
-}
-
-void OffAxFilter::show_output() {
-    this->show(this->d, true);
-}
-
-
-PYBIND11_MODULE(off_axis_filter, m) {
-        py::class_<OffAxFilter>(m, "OffAxFilter")
+PYBIND11_MODULE(off_axis_module, m) {
+        py::class_<OffAxisModule>(m, "OffAxisModule")
                 .def(py::init<py::array_t<int, py::array::c_style | py::array::forcecast>, py::array_t<int, py::array::c_style | py::array::forcecast>, 
                         py::array_t<double, py::array::c_style | py::array::forcecast>, py::array_t<complex<double>, py::array::c_style | py::array::forcecast>,
                         unsigned, unsigned>())
-                .def("__call__", static_cast<py::array_t<double> (OffAxFilter::*)(py::array_t<uint8_t, py::array::c_style | py::array::forcecast>)>(&OffAxFilter::__call__))
-                .def("filter", static_cast<bool (OffAxFilter::*)(py::array_t<uint8_t, py::array::c_style | py::array::forcecast>)>(&OffAxFilter::filter))
-                .def("size", &OffAxFilter::size)
-                .def("threads_in_use", &OffAxFilter::threads_in_use)
-                .def("show_input", &OffAxFilter::show_input)
-                .def("show_output", &OffAxFilter::show_output)
+                .def("__call__", static_cast<py::array_t<double> (OffAxisModule::*)(py::array_t<uint8_t, py::array::c_style | py::array::forcecast>)>(&OffAxisModule::__call__))
+                .def("input_size", &OffAxisModule::input_size)
+                .def("output_size", &OffAxisModule::output_size)
+                .def("threads_in_use", &OffAxisModule::threads_in_use)
+                .def("show_filter_input", &OffAxisModule::show_filter_input)
+                .def("show_filter_output", &OffAxisModule::show_filter_output)
+                .def("show_phase_input", &OffAxisModule::show_phase_input)
+                .def("show_phase_output", &OffAxisModule::show_phase_output)
                 ;
 }
