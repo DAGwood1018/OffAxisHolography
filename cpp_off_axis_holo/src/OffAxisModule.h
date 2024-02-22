@@ -7,6 +7,7 @@
 using namespace std;
 namespace py = pybind11;
 
+
 class OffAxisModule {
 
 public:
@@ -15,7 +16,7 @@ public:
                 unsigned threads, unsigned flags);
     ~OffAxisModule();
     
-    py::array_t<double> __call__(py::array_t<uint8_t, py::array::c_style | py::array::forcecast> fringes);
+    Eigen::MatrixXd __call__(py::array_t<uint8_t, py::array::c_style | py::array::forcecast> fringes);
 
     int input_size();
     int output_size(); 

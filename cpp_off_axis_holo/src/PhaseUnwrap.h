@@ -25,7 +25,7 @@ public:
     ~PhaseUnwrap();
 
     py::array_t<double> __call__(py::array_t<double, py::array::c_style | py::array::forcecast> phase_wrap);
-    Eigen::MatrixXd operator()(Eigen::MatrixXd& phase_wrap);
+    Eigen::MatrixXd execute(Eigen::MatrixXd& phase_wrap);
     void unwrap();
     int size();
     int threads_in_use();

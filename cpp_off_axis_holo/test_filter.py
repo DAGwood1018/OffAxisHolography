@@ -1,5 +1,4 @@
 from hologram_filtering import AlignOffAxis
-from phase_unwrap import PhaseUnwrap
 import numpy as np
 from matplotlib import pyplot as plt
 from holo_utils import format_img
@@ -23,10 +22,10 @@ phase = filter(fringes.astype('uint8'))
 dt = time.time() - t0
 print("Runtime: ", dt)
 
-#filter = align(threads=1)
+filter = align(threads=1)
 phase1 = filter(fringes.astype('uint8'))
 
-#filter = align(threads=1)
+filter = align(threads=1)
 phase2 = filter(fringes.astype('uint8'))
 
 '''
@@ -56,6 +55,7 @@ plt.figure()
 plt.imshow(phase1, cmap='rainbow')
 plt.colorbar()
 plt.savefig(os.path.join(path, "phase1.png"))
+
 
 path = os.getcwd()
 plt.figure()

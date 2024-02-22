@@ -34,9 +34,9 @@ OffAxisModule::~OffAxisModule() {
  * @brief Python call function that filters interfence pattern, unwraps the phase, and returns a numpy array.
  * @param fringes Numpy ndarray.
 **/
-py::array_t<double> OffAxisModule::__call__(py::array_t<uint8_t, py::array::c_style | py::array::forcecast> fringes) {
-    py::array_t<double> phase_wrap = this->filter->__call__(fringes);
-    return this->unwrap->__call__(phase_wrap);
+Eigen::MatrixXd OffAxisModule::__call__(py::array_t<uint8_t, py::array::c_style | py::array::forcecast> fringes) {
+    Eigen::MatrixXd phase_wrap = this->filter->operator()(fringes);
+    return this->unwrap->execute(phase_wrap);
 }
 
 
@@ -86,7 +86,7 @@ PYBIND11_MODULE(off_axis_module, m) {
                 .def(py::init<py::array_t<int, py::array::c_style | py::array::forcecast>, py::array_t<int, py::array::c_style | py::array::forcecast>, 
                         py::array_t<double, py::array::c_style | py::array::forcecast>, py::array_t<complex<double>, py::array::c_style | py::array::forcecast>,
                         unsigned, unsigned>())
-                .def("__call__", static_cast<py::array_t<double> (OffAxisModule::*)(py::array_t<uint8_t, py::array::c_style | py::array::forcecast>)>(&OffAxisModule::__call__))
+                .def("__call__", static_cast<Eigen::MatrixXd (OffAxisModule::*)(py::array_t<uint8_t, py::array::c_style | py::array::forcecast>)>(&OffAxisModule::__call__))
                 .def("input_size", &OffAxisModule::input_size)
                 .def("output_size", &OffAxisModule::output_size)
                 .def("threads_in_use", &OffAxisModule::threads_in_use)

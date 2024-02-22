@@ -30,7 +30,7 @@ X, Y = np.meshgrid(x, y)
 sigma = 1.0
 
 # Generate Gaussian phase
-phase = gaussian_phase(X, Y, sigma)
+phase = gaussian_phase(X, Y, sigma) * np.ones((100, 100)) * np.linspace(0, 8 * np.pi, 100).reshape((-1, 1))
 
 # Mask the image to split it in two horizontally
 mask = np.zeros_like(phase, dtype=bool)
