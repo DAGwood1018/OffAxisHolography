@@ -1,9 +1,6 @@
 #ifndef UNWRAP_H
 #define UNWRAP_H
 
-#include <pybind11/pybind11.h>
-#include <pybind11/numpy.h>
-#include <pybind11/eigen.h>
 #include <Eigen/Dense>
 #include <complex.h>
 #include <fftw3.h>
@@ -15,17 +12,14 @@
 Eigen::MatrixXd wrap_to_pi(const Eigen::MatrixXd& angles);
 
 using namespace std;
-namespace py = pybind11;
 
 class PhaseUnwrap {
 
 public:
     PhaseUnwrap(int M, int N, unsigned nthreads, unsigned flags);
-    PhaseUnwrap(py::array_t<int, py::array::c_style | py::array::forcecast> n, unsigned nthreads, unsigned flags);
     ~PhaseUnwrap();
 
-    py::array_t<double> __call__(py::array_t<double, py::array::c_style | py::array::forcecast> phase_wrap);
-    Eigen::MatrixXd execute(Eigen::MatrixXd& phase_wrap);
+    Eigen::MatrixXd operator()(Eigen::MatrixXd& phase_wrap);
     void unwrap();
     int size();
     int threads_in_use();
@@ -53,7 +47,6 @@ protected:
     void backwards(double *a);
     void solve(Eigen::MatrixXd& in, Eigen::MatrixXd& out);
     bool write(Eigen::MatrixXd& mat);
-    bool write(py::array_t<double, py::array::c_style | py::array::forcecast> arr);
 };
 
 #endif

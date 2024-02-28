@@ -36,7 +36,7 @@ OffAxisModule::~OffAxisModule() {
 **/
 Eigen::MatrixXd OffAxisModule::__call__(py::array_t<uint8_t, py::array::c_style | py::array::forcecast> fringes) {
     Eigen::MatrixXd phase_wrap = this->filter->operator()(fringes);
-    return this->unwrap->execute(phase_wrap);
+    return this->unwrap->operator()(phase_wrap);
 }
 
 

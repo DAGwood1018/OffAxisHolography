@@ -33,25 +33,6 @@ PhaseUnwrap::PhaseUnwrap(int M, int N, unsigned nthreads, unsigned flags) {
 
 
 /**
-* @brief Initialize phase unwrapping object.
-**/
-PhaseUnwrap::PhaseUnwrap(py::array_t<int, py::array::c_style | py::array::forcecast> n, unsigned nthreads, unsigned flags) {
-
-    py::buffer_info sz_buf = n.request();
-    if (sz_buf.size != 2) {
-        throw py::value_error("Expect 2D shape.");
-    }
-    int* shape = static_cast<int *>(sz_buf.ptr);
-
-    this->M = shape[0];
-    this->N = shape[1]; 
-    this->flags = flags;
-    this->nthreads = nthreads;
-    this->alloc();
-}
-
-
-/**
  * @brief Free memory from phase unwrapping.
 **/
 PhaseUnwrap::~PhaseUnwrap() {
@@ -107,26 +88,6 @@ int PhaseUnwrap::threads_in_use() {
  * @brief Unwrap a given wrapped phase image.
  * @param phase Numpy ndarray.
 **/
-py::array_t<double> PhaseUnwrap::__call__(py::array_t<double, py::array::c_style | py::array::forcecast> phase_wrap) {
-    bool res = this->write(phase_wrap);
-    size_t shape[2] = {static_cast<size_t>(this->M), static_cast<size_t>(this->N)};
-    py::array_t<double> phase_unwrap(shape);
-    py::buffer_info buffer = phase_unwrap.request();
-    double* ptr = static_cast<double *>(buffer.ptr);
-    
-    if (res) {
-        this->unwrap();
-        memcpy(ptr, this->phase_unwrap->data(), sizeof(double)*this->size());
-    } else {
-        for (auto i = 0; i < this->size(); i++) {
-            ptr[i] = 0;
-        } 
-    }
-
-    return phase_unwrap;
-}
-
-
 Eigen::MatrixXd PhaseUnwrap::operator()(Eigen::MatrixXd& phase_wrap) {
     bool res = this->write(phase_wrap);
     Eigen::MatrixXd phase_unwrap = Eigen::MatrixXd::Zero(this->M, this->N);
@@ -238,30 +199,6 @@ void PhaseUnwrap::backwards(double* a) {
 }
 
 
-/**
- * @brief Writes numpy array to memory.
- * @param arr Numpy ndarray.
-**/
-bool PhaseUnwrap::write(py::array_t<double, py::array::c_style | py::array::forcecast> arr) {
-    // Access the underlying buffer of the NumPy array
-    py::buffer_info buf = arr.request();
-    
-    // Pointer to the data
-    double *ptr = static_cast<double *>(buf.ptr);
-    
-    // Length of the array
-    unsigned size = buf.size;
-
-    if (size == this->size()) {
-       memcpy(this->phase_wrap->data(), ptr, sizeof(double)*this->size());
-       return true;
-    } else {
-        cerr << "Wrapped phase input had an incompatible size." << endl;
-        return false;
-    }
-}
-
-
 bool PhaseUnwrap::write(Eigen::MatrixXd& mat) {
     if (mat.size() == this->size()) {
        memcpy(this->phase_wrap->data(), mat.data(), sizeof(double)*this->size());
@@ -296,17 +233,3 @@ void PhaseUnwrap::show_input() {
 void PhaseUnwrap::show_output() {
     this->show(this->phase_unwrap);
 }
-
-
-
-// Create Pybind11 Module
-PYBIND11_MODULE(phase_unwrap, m) {
-        py::class_<PhaseUnwrap>(m, "PhaseUnwrap")
-            .def(py::init<py::array_t<int, py::array::c_style | py::array::forcecast>, unsigned, unsigned>())
-            .def("__call__", static_cast<py::array_t<double> (PhaseUnwrap::*)(py::array_t<double, py::array::c_style | py::array::forcecast>)>(&PhaseUnwrap::__call__))
-            .def("size", &PhaseUnwrap::size)
-            .def("threads_in_use", &PhaseUnwrap::threads_in_use)
-            .def("show_input", &PhaseUnwrap::show_input)
-            .def("show_output", &PhaseUnwrap::show_output)
-            ;
-} 
