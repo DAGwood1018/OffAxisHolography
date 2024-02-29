@@ -23,10 +23,7 @@ dt = time.time() - t0
 print("Runtime: ", dt)
 
 filter = align(threads=1)
-phase1 = filter(fringes.astype('uint8'))
-
-filter = align(threads=1)
-phase2 = filter(fringes.astype('uint8'))
+phase = filter(fringes.astype('uint8'))
 
 '''
 filter.show_input()
@@ -50,15 +47,3 @@ plt.imshow(phase, cmap='rainbow')
 plt.colorbar()
 plt.savefig(os.path.join(path, "phase.png"))
 
-path = os.getcwd()
-plt.figure()
-plt.imshow(phase1, cmap='rainbow')
-plt.colorbar()
-plt.savefig(os.path.join(path, "phase1.png"))
-
-
-path = os.getcwd()
-plt.figure()
-plt.imshow(phase2, cmap='rainbow')
-plt.colorbar()
-plt.savefig(os.path.join(path, "phase2.png"))
