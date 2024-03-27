@@ -1,5 +1,5 @@
 import numpy as np
-from off_axis_holo.discrete_transforms import REDFT
+from py_off_axis_holo.discrete_transforms import REDFT
 
 def wrap_to_2pi(angle):
     angle = np.remainder(angle, 2 * np.pi).astype(angle.dtype)

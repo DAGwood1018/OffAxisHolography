@@ -1,8 +1,8 @@
 from abc import ABC
 import numpy as np
 from scipy.optimize import minimize
-from off_axis_holo.discrete_transforms import DFT
-from off_axis_holo.holo_utils import reference_wave, gridspace, format_img
+from py_off_axis_holo.discrete_transforms import DFT
+from py_off_axis_holo.holo_utils import reference_wave, gridspace, format_img
 from warnings import warn
 import cv2
 
