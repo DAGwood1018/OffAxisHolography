@@ -2,7 +2,7 @@ from skbuild import setup
 
 if __name__ == '__main__':
     setup(
-        name='OffAxisHolography',
+        name='OffAxisHolographyCpp',
         version='1.0.0',
         author='Davis Garwood',
         description='Code for Performing Off-axis Holography.',
