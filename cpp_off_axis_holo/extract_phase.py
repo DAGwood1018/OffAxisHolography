@@ -1,7 +1,7 @@
 import numpy as np
-from off_axis_holo.off_axis_module import ExtractPhase
+from cpp_off_axis_holo.off_axis_module import ExtractPhase
 from scipy.optimize import minimize
-from off_axis_holo.holo_utils import reference_wave, gridspace, format_img
+from cpp_off_axis_holo.holo_utils import reference_wave, gridspace, format_img
 from warnings import warn
 import cv2
 
