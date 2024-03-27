@@ -2,7 +2,6 @@ import pyfftw
 import numpy as np
 from off_axis_holo.holo_utils import pad_arr, unpad_arr
 
-
 def fft(a, **kwargs):
     """
     Perform Fourier transform.
