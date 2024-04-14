@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.10)
 project(off_axis_holo)
 
 # Set Flags
@@ -30,23 +30,15 @@ include_directories(${pybind11_SOURCE_DIR}/include)
 
 # <Find and Include Other Dependencies>:
 
-# Execute the setup bash script
-set(SETUP_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/setup.sh)
-execute_process(
-    COMMAND bash ${SETUP_SCRIPT}
-    RESULT_VARIABLE SETUP_RESULT
-)
-
-if(SETUP_RESULT)
-    message(FATAL_ERROR "Failed to execute setup.sh. Aborting.")
-endif()
-
 # Find Python Dev
 find_package(Python COMPONENTS Development)
 
 # Find Eigen
 find_package(Eigen3 REQUIRED)
 add_definitions(-DEIGEN_NO_DEBUG)
+
+# Find FFTW3
+find_package(FFTW3 REQUIRED)
 
 # Find OpenCV
 find_package(OpenCV REQUIRED)
@@ -60,22 +52,24 @@ include_directories(${EIGEN3_INCLUDE_DIRS})
 # Include OpenCV headers
 include_directories(${OpenCV_INCLUDE_DIRS})
 
+# Include FFTW3 headers
+include_directories(${FFTW3_INCLUDE_DIRS})
 
 # <OffAxisModule>:
 
-find_package(PythonExtensions REQUIRED)
+#find_package(PythonExtensions REQUIRED)
 
 # Add the pybind11 source files
-add_library(off_axis_module MODULE off_axis_holo/src/OffAxisFilter.cpp  off_axis_holo/src/PhaseUnwrap.cpp  off_axis_holo/src/ExtractPhase.cpp)
+add_library(off_axis_module MODULE cpp_off_axis_holo/src/OffAxisFilter.cpp  cpp_off_axis_holo/src/PhaseUnwrap.cpp  cpp_off_axis_holo/src/ExtractPhase.cpp)
 
 # Set filename
 set_target_properties(off_axis_module PROPERTIES PREFIX "" OUTPUT_NAME "off_axis_module" SUFFIX ".so")
 
 # Set the output directory for the compiled module
-#set_target_properties(off_axis_module PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/off_axis_holo/src)
+set_target_properties(off_axis_module PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/off_axis_holo/src)
 
 # Set needed libraries
-#target_link_libraries(off_axis_module PRIVATE -lfftw3 -lfftw3_threads -lm ${OpenCV_LIBS} ${EIGEN3_LIBS})
+target_link_libraries(off_axis_module PRIVATE ${FFTW3_LIBS} ${OpenCV_LIBS} ${EIGEN3_LIBS})
 
-python_extension_module(off_axis_module)
-install(TARGETS off_axis_module LIBRARY DESTINATION  off_axis_holo)
+#python_extension_module(off_axis_module)
+#install(TARGETS off_axis_module LIBRARY DESTINATION  off_axis_holo)
