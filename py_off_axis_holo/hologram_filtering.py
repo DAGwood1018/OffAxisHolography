@@ -259,12 +259,12 @@ class OffAxisFilter(OffAxisMask):
 
     def forwards(self, a):
         a = self.pad_arr(a * self._window) if self._nb > 1 else a * self._window
-        return self._fft(a)
+        return np.fft.fftshift(self._fft(a))
 
     def backwards(self, b):
         if self._crop and not self._mask is None:
             b = self._crop_to_mask(b)
-        a = self._ifft(b)
+        a = self._ifft(np.fft.ifftshift(b))
         return self.unpad_arr(a) if self._nb > 1 else a
 
     def add_window(self, window_fcn, **kwargs):
