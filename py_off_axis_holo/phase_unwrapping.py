@@ -19,10 +19,10 @@ def unwrap_phase(phase_wrap, **kwargs):
 
 class PhaseUnwrap(REDFT):
 
-    '''
+    """
     This class is adapted from the method described in https://doi.org/10.1088/1361-6501/aaec5c.
     The author's Matlab implementation can be found here https://www.mathworks.com/matlabcentral/fileexchange/68493-robust-2d-phase-unwrapping-algorithm.
-    '''
+    """
 
     def __init__(self, Nx, Ny, nb=1, threads=1, dtype='float64', zero=False, **kwargs):
         super().__init__((Nx, Ny), nb, threads=threads, ortho=True, dtype=dtype, **kwargs)
