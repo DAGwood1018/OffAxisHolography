@@ -7,5 +7,5 @@ if __name__ == '__main__':
         author='Davis Garwood',
         description='Code for Performing Off-axis Holography.',
         packages=['py_off_axis_holo'],
-        install_requires=['numpy', 'scipy', 'pyfftw', 'opencv-python']
+        install_requires=['numpy', 'scipy', 'pyfftw', 'matplotlib', 'tkinter', 'opencv-python']
     )

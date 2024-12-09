@@ -1,10 +1,17 @@
 from abc import ABC
 import numpy as np
+import logging
+import cv2
+
 from scipy.optimize import minimize
 from py_off_axis_holo.discrete_transforms import DFT
 from py_off_axis_holo.holo_utils import reference_wave, gridspace, format_img
 from warnings import warn
-import cv2
+
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    handlers=[logging.FileHandler('hologram_filtering.log'),
+                              logging.StreamHandler()])
 
 class OffAxisMask(ABC, DFT):
 

@@ -23,7 +23,7 @@ def fresnel(field, z, wl, sz, **kwargs):
 
     Nx, Ny = field.shape
     prop = Fresnel(Nx, Ny, wl, sz, **kwargs)
-    return prop(field, z)
+    return prop.propagate(field, z)
 
 def angular_spectrum(field, z, wl, sz, **kwargs):
     """
@@ -44,7 +44,7 @@ def angular_spectrum(field, z, wl, sz, **kwargs):
 
     Nx, Ny = field.shape
     prop = AngularSpectrum(Nx, Ny, wl, sz, **kwargs)
-    return prop(field, z)
+    return prop.propagate(field, z)
 
 def rep_propagation(method, field, dists, *args, **kwargs):
     """
@@ -68,7 +68,7 @@ def rep_propagation(method, field, dists, *args, **kwargs):
 
     recs = []
     for i, dist in enumerate(dists):
-        f = copy(prop(field, dist))
+        f = copy(prop.propagate(field, dist))
         recs.append(f)
     return dists, recs
 
@@ -101,7 +101,7 @@ def chain_propagation(method, field, dists, *args, direction=1, **kwargs):
     d0 = 0
     recs = []
     for dist in dists:
-        field = prop(field, dist - d0)
+        field = prop.propagate(field, dist - d0)
         d0 = dist
         recs.append(field)
     return dists, recs
@@ -132,7 +132,7 @@ class Propagate(DFT, ABC):
         self._sz = sz
 
     @abstractmethod
-    def __call__(self, field, z):
+    def propagate(self, field, z):
         ...
 
     def _image_plane(self):
@@ -178,7 +178,7 @@ class Propagate(DFT, ABC):
 
 class Fresnel(Propagate):
 
-    def __call__(self, field, z):
+    def propagate(self, field, z):
         """
         Performs Fresnel propagation via FFT. Note that the pixel size of the reconstruction is
         wl * z / ( N * sz ).
@@ -202,7 +202,7 @@ class Fresnel(Propagate):
 
 class AngularSpectrum(Propagate):
 
-    def __call__(self, field, z):
+    def propagate(self, field, z):
         """
         Performs angular spectrum method via FFT. Note the paraxial approximation to the
         Helmholtz wave equation is used.
