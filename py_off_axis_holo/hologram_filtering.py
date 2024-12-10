@@ -82,8 +82,8 @@ class OffAxisMask(ABC, DFT):
     def _select_roi(self, Fh, auto=False):
         Fh_img = format_img(Fh)
 
-        print('Select Order of Interest.')
         cv2.namedWindow('spfilter_roi_selector', cv2.WINDOW_NORMAL)
+        cv2.setWindowTitle('spfilter_roi_selector', 'Select Order of Interest')
         ROI = cv2.selectROI('spfilter_roi_selector', Fh_img, fromCenter=True)
 
         roi_mask = np.zeros(self.shape)
@@ -101,7 +101,7 @@ class OffAxisMask(ABC, DFT):
                 warn("Failed to automatically find peak. Resorting to chosen center.")
 
         cv2.destroyWindow('spfilter_roi_selector')
-        print(f'Selected ROI centered at a tilt of ({f1[0]}, {f1[1]}).')
+        logging.info(f'Selected ROI centered at a tilt of ({f1[0]}, {f1[1]}).')
         return roi_mask, f1
 
     def _crop_to_mask(self, a):
@@ -234,7 +234,7 @@ class OffAxisFilter(OffAxisMask):
         return mag.sum()
 
     def _optimize_tilt(self, f1, phase, method='TNC', step=1, tol=1e-6, opts=None):
-        print("Aligning Mask to Inferred Tilt...")
+        logging.info("Aligning Mask to Inferred Tilt...")
         M, N = self._dims
         X, Y = gridspace(N, M, 1, True)
 
@@ -248,7 +248,7 @@ class OffAxisFilter(OffAxisMask):
         res = minimize(self._min_ksqr, f1, args=(phase, X, Y),
                        method=method, bounds=bounds, tol=tol, options=opts)
 
-        print("Optimization Routine Complete.")
+        logging.info("Optimization Routine Complete.")
         return np.array(res.x)
 
     def _set_tilt_compensation(self, f1, radius=None):
