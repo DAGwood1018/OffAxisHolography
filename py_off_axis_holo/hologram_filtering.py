@@ -102,7 +102,7 @@ class OffAxisMask(ABC, DFT):
 
         cv2.destroyWindow('spfilter_roi_selector')
         logging.info(f'Selected ROI centered at a tilt of ({f1[0]}, {f1[1]}).')
-        return [(int(ROI[1]), int(ROI[1]) + int(ROI[3])), (int(ROI[0]), int(ROI[0]+ROI[2]))], roi_mask, f1
+        return roi_mask, f1
 
     def _crop_to_mask(self, a):
         if self._mask is None:
@@ -224,7 +224,7 @@ class OffAxisFilter(OffAxisMask):
         mag = np.absolute(xvec) ** 2 + np.absolute(yvec) ** 2
         return mag.sum()
 
-    def _optimize_tilt(self, f1, phase, method='TNC', tol=1e-6, step=10, roi=None, opts=None):
+    def _optimize_tilt(self, f1, phase, method='TNC', tol=1e-6, step=10, opts=None):
         logging.info("Aligning Mask to Inferred Tilt...")
         M, N = self._dims
         X, Y = gridspace(N, M, 1, True)
@@ -235,11 +235,7 @@ class OffAxisFilter(OffAxisMask):
 
         if opts is None:
             opts = {}
-        if roi is None:
-            bounds = [(f1[0]-step, f1[0]+step), (f1[1]-step, f1[1]+step)]
-        else:
-            bounds = roi
-
+        bounds = [(f1[0]-step, f1[0]+step), (f1[1]-step, f1[1]+step)]
         res = minimize(self._min_ksqr, f1, args=(phase, X, Y),
                        method=method, bounds=bounds, tol=tol, options=opts)
         logging.info("Optimization Routine Complete.")
@@ -310,7 +306,7 @@ class OffAxisFilter(OffAxisMask):
         self.reset()
         Fh = self.forwards(fringes)
         Fh_scaled = 2 * np.log(np.abs(Fh) + 1e-10)
-        ROI, roi_mask, f1 = self._select_roi(Fh_scaled, auto)
+        roi_mask, f1 = self._select_roi(Fh_scaled, auto)
 
         if auto:
             self._mask, _, _ = self._calc_mask(f1, radius)
@@ -321,7 +317,7 @@ class OffAxisFilter(OffAxisMask):
             try:
                 Fh = self.forwards(fringes) * self._mask
                 phi = np.angle(self.backwards(Fh))
-                f1 = self._optimize_tilt(f1, phi, roi=ROI, **kwargs)
+                f1 = self._optimize_tilt(f1, phi, **kwargs)
                 self._mask, _, _ = self._calc_mask(f1, radius)
             except RuntimeError:
                 warn("Could not align to tilt.")
