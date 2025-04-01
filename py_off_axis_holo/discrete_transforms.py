@@ -248,14 +248,14 @@ class DiscreteTransform:
 
 class DFT:
 
-    def __init__(self, dims, nb=1, threads=1, ortho=False, dtype='complex128', **kwargs):
+    def __init__(self, dims, nb=0, threads=1, ortho=False, dtype='complex128', **kwargs):
         """
         Class for performing discrete fourier transforms.
 
         :param dims: New dimension of ndarray to operate on.
         :type dims: int
-        :param nb: Padding factor to use. i.e. nb * dims = padded array shape. Default is '1'.
-        :type nb: float
+        :param nb: Number of zeros to pad array dimensions by. Default is '0'.
+        :type nb: int
         :param threads: Number of threads to use. Default is '1'.
         :type threads: int
         :param ortho: Whether to use orthonormal normalization. Default is 'False'
@@ -278,7 +278,7 @@ class DFT:
         :rtype: tuple<int>
         """
 
-        return tuple(np.ceil(self._nb * np.array(self._dims)).astype('int64'))
+        return tuple(2 * self._nb + np.array(self._dims))
 
     def pad_arr(self, a):
         """
@@ -315,7 +315,7 @@ class DFT:
         """
 
         assert a.shape == self._dims, "Shape of array must be " + str(self._dims)
-        if self._nb > 1:
+        if self._nb > 0:
             a = self.pad_arr(a)
         return np.fft.fftshift(self._fft(a, ortho=self._ortho, normalise_idft=False))
 
@@ -331,20 +331,20 @@ class DFT:
 
         assert b.shape == self.shape, "Shape of array must be " + str(self.shape)
         a = self._ifft(np.fft.ifftshift(b), ortho=self._ortho, normalise_idft=False)
-        if self._nb > 1:
+        if self._nb > 0:
             return self.unpad_arr(a)
         return a
 
 class REDFT:
 
-    def __init__(self, dims, nb=1, threads=1, ortho=False, dtype='float64', **kwargs):
+    def __init__(self, dims, nb=0, threads=1, ortho=False, dtype='float64', **kwargs):
         """
         Class for performing cosine (real even) discrete Fourier transforms.
 
         :param dims: New dimension of ndarray to operate on.
         :type dims: int
-        :param nb: Padding factor to use. i.e. nb * dims = padded array shape. Default is '1'.
-        :type nb: float
+        :param nb: Number of zeros to pad array dimensions by. Default is '0'.
+        :type nb: int
         :param threads: Number of threads to use. Default is '1'.
         :type threads: int
         :param ortho: Whether to use orthonormal normalization. Default is 'False'
@@ -367,7 +367,7 @@ class REDFT:
         :rtype: tuple<int>
         """
 
-        return tuple(np.ceil(self._nb * np.array(self._dims)).astype(int))
+        return tuple(2*self._nb + np.array(self._dims))
 
     def pad_arr(self, a):
         """
@@ -404,7 +404,7 @@ class REDFT:
         """
 
         assert a.shape == self._dims, "Shape of array must be " + str(self._dims)
-        if self._nb > 1:
+        if self._nb > 0:
             a = self.pad_arr(a)
         return self._dct(a, ortho=self._ortho, normalise_idft=False)
 
@@ -420,6 +420,6 @@ class REDFT:
 
         assert b.shape == self.shape, "Shape of array must be " + str(self.shape)
         a = self._idct(b, ortho=self._ortho, normalise_idft=False)
-        if self._nb > 1:
+        if self._nb > 0:
             a = self.unpad_arr(a)
         return a

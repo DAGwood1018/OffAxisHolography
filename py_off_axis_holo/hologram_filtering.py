@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO,
 
 class OffAxisMask(ABC, DFT):
 
-    def __init__(self, M, N, nb=1, threads=1, dtype='complex128', **kwargs):
+    def __init__(self, M, N, nb=0, threads=1, dtype='complex128', **kwargs):
         super().__init__((M, N), nb, threads=threads, dtype=dtype, ortho=False, **kwargs)
         self._Fx, self._Fy = gridspace(N, M, nb, True)
         self._mask = None
@@ -76,8 +76,9 @@ class OffAxisMask(ABC, DFT):
             fy = np.median(fy)
 
         M, N = self.shape
-        f = np.array([fx - N / 2, fy - M / 2])
-        return f.reshape(f.size, ) / self._nb
+        rx, ry = N / (N - 2 * self._nb), M / (M - 2 * self._nb)
+        f = np.array([(fx - N / 2) / rx, (fy - M / 2) / ry])
+        return f.reshape(f.size, )
 
     def _select_roi(self, Fh, auto=False):
         Fh_img = format_img(Fh)
@@ -92,7 +93,8 @@ class OffAxisMask(ABC, DFT):
         M, N = self._dims
         fx = int(ROI[0] + ROI[2] // 2) - N / 2
         fy = int(ROI[1] + ROI[3] // 2) - M / 2
-        f1 = np.array([fx, fy]) / self._nb
+        rx, ry = N / (N - 2 * self._nb), M / (M - 2 * self._nb)
+        f1 = np.array([fx / rx, fy / ry])
 
         if auto:
             try:
@@ -125,7 +127,7 @@ class OffAxisMask(ABC, DFT):
 
 class OffAxisFilter(OffAxisMask):
 
-    def __init__(self, M, N, wl, sz, nb=1, threads=1, dtype='complex128', **kwargs):
+    def __init__(self, M, N, wl, sz, nb=0, threads=1, dtype='complex128', **kwargs):
         """
         *Using un-normalized FFTs is fine since we are only concerned with the phase information.
         """
@@ -227,7 +229,7 @@ class OffAxisFilter(OffAxisMask):
     def _optimize_tilt(self, f1, phase, method='TNC', tol=1e-6, step=10, opts=None):
         logging.info("Aligning Mask to Inferred Tilt...")
         M, N = self._dims
-        X, Y = gridspace(N, M, 1, True)
+        X, Y = gridspace(N, M, 0, True)
 
         phase = self._crop_to_mask(phase)
         X = self._crop_to_mask(X)
@@ -255,14 +257,14 @@ class OffAxisFilter(OffAxisMask):
         return True
 
     def forwards(self, a):
-        a = self.pad_arr(a * self._window) if self._nb > 1 else a * self._window
+        a = self.pad_arr(a * self._window) if self._nb > 0 else a * self._window
         return np.fft.fftshift(self._fft(a))
 
     def backwards(self, b):
         if self._crop and not self._mask is None:
             b = self._crop_to_mask(b)
         a = self._ifft(np.fft.ifftshift(b))
-        return self.unpad_arr(a) if self._nb > 1 else a
+        return self.unpad_arr(a) if self._nb > 0 else a
 
     def add_window(self, window_fcn, **kwargs):
         if callable(window_fcn):
@@ -276,7 +278,7 @@ class OffAxisFilter(OffAxisMask):
 
     def construct_reference(self, f1, M, N):
         tilt = self._calc_tilt(f1)
-        X, Y = gridspace(N, M, 1, True)
+        X, Y = gridspace(N, M, 0, True)
         return reference_wave((X, Y), tilt, self._k0, self._sz)
 
     def align_to_freq(self, f1, tilt_compensate_in='FP'):
