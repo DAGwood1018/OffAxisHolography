@@ -30,15 +30,12 @@ class OffAxisMask(ABC, DFT):
 
     @property
     def roi(self):
-        if self.masked:
+        if not self.masked:
             return 0, 0, self._dims[0], self._dims[1]
-        cols, rows = np.where(self._mask)
-        if not (cols.size > 0 and rows.size > 0):
-            raise RuntimeError("All values masked out.")
-        m_min, m_max = rows.min(), rows.max()
-        n_min, n_max = cols.min(), cols.max()
-        m, n = m_max - m_min + 1, n_max - n_min + 1
-        return m_min, n_min, m, n
+        coords = np.argwhere(self._mask)
+        m_min, n_min = coords.min(axis=0)
+        m_max, n_max = coords.max(axis=0)
+        return m_min, n_min, m_max - m_min + 1, n_max - n_min + 1
 
     def _calc_mask(self, f1, radius=None):
         """
@@ -111,8 +108,12 @@ class OffAxisMask(ABC, DFT):
         return roi_mask, f1
 
     def _crop_to_mask(self, a):
-        roi = self.roi
-        return a[roi[0]:roi[0]+roi[2], roi[1]:roi[1]+roi[3]]
+        if not self.masked:
+            raise RuntimeError("No stored mask found.")
+        coords = np.argwhere(self._mask)
+        m_min, n_min = coords.min(axis=0)
+        m_max, n_max = coords.max(axis=0)
+        return a[m_min:m_max + 1, n_min:n_max + 1]
 
     def alignment_mask(self, right=True):
         M, N = self._dims
@@ -257,7 +258,7 @@ class OffAxisFilter(OffAxisMask):
         return True
 
     def forwards(self, a):
-        a = self.pad_arr(a * self._window) if self._nb > 0 else a * self._window
+        a = a * self._window
         return np.fft.fftshift(self._fft(a))
 
     def backwards(self, b):
@@ -269,7 +270,7 @@ class OffAxisFilter(OffAxisMask):
     def add_window(self, window_fcn, **kwargs):
         if callable(window_fcn):
             try:
-                self._window = window_fcn(self._dims, **kwargs)
+                self._window = window_fcn(self.shape, **kwargs)
                 return True
             except TypeError:
                 warn("Invalid window function provided.")
