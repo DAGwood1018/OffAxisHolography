@@ -30,18 +30,14 @@ class OffAxisMask(ABC, DFT):
 
     @property
     def roi(self):
-        if self._mask is None:
+        if self.masked:
             return 0, 0, self._dims[0], self._dims[1]
-        coords = np.argwhere(self._mask)
-        m_min, n_min = coords.min(axis=0)
-        m_max, n_max = coords.max(axis=0)
+        cols, rows = np.where(self._mask)
+        if not (cols.size > 0 and rows.size > 0):
+            raise RuntimeError("All values masked out.")
+        m_min, m_max = rows.min(), rows.max()
+        n_min, n_max = cols.min(), cols.max()
         m, n = m_max - m_min + 1, n_max - n_min + 1
-        if self._sqr_ar:
-            min_dim = 0 if self._dims[0] < self._dims[1] else 1
-            if min_dim == 0:
-                return m_min, m_min, m, m
-            elif min_dim == 1:
-                return n_min, n_min, n, n
         return m_min, n_min, m, n
 
     def _calc_mask(self, f1, radius=None):
@@ -115,12 +111,8 @@ class OffAxisMask(ABC, DFT):
         return roi_mask, f1
 
     def _crop_to_mask(self, a):
-        if self._mask is None:
-            raise RuntimeError("No stored mask found.")
-        coords = np.argwhere(self._mask)
-        m_min, n_min = coords.min(axis=0)
-        m_max, n_max = coords.max(axis=0)
-        return a[m_min:m_max + 1, n_min:n_max + 1]
+        roi = self.roi
+        return a[roi[0]:roi[0]+roi[2], roi[1]:roi[1]+roi[3]]
 
     def alignment_mask(self, right=True):
         M, N = self._dims
