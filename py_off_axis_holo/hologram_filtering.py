@@ -107,14 +107,6 @@ class OffAxisMask(ABC, DFT):
         logging.info(f'Selected ROI centered at a tilt of ({f1[0]}, {f1[1]}).')
         return roi_mask, f1
 
-    def _crop_to_mask(self, a):
-        if not self.masked:
-            raise RuntimeError("No stored mask found.")
-        coords = np.argwhere(self._mask)
-        m_min, n_min = coords.min(axis=0)
-        m_max, n_max = coords.max(axis=0)
-        return a[m_min:m_max + 1, n_min:n_max + 1]
-
     def alignment_mask(self, right=True):
         M, N = self._dims
         fx = (8 * N + M - np.sqrt(8 * (N ** 2 + M ** 2) + 2 * N * M)) / 14
@@ -124,6 +116,13 @@ class OffAxisMask(ABC, DFT):
         f1_opt = (fx, sign * fy)
         mask10, mask01, mask00 = self._calc_mask(f1_opt)
         return mask10 + mask01 + mask00, f1_opt
+
+    @classmethod
+    def crop_to_mask(cls, a, mask):
+        coords = np.argwhere(mask)
+        m_min, n_min = coords.min(axis=0)
+        m_max, n_max = coords.max(axis=0)
+        return a[m_min:m_max + 1, n_min:n_max + 1]
 
 
 class OffAxisFilter(OffAxisMask):
@@ -138,6 +137,7 @@ class OffAxisFilter(OffAxisMask):
         self._sz = sz
         self._crop = False
         self._ref = None
+        self._filter_radius = 0
         self._window = np.ones(self._dims)
 
     def __call__(self, fringes):
@@ -232,9 +232,10 @@ class OffAxisFilter(OffAxisMask):
         M, N = self._dims
         X, Y = gridspace(N, M, 0, True)
 
-        phase = self._crop_to_mask(phase)
-        X = self._crop_to_mask(X)
-        Y = self._crop_to_mask(Y)
+        if self.masked:
+            phase = self.crop_to_mask(phase, self._mask)
+            X = self.crop_to_mask(X, self._mask)
+            Y = self.crop_to_mask(Y, self._mask)
 
         if opts is None:
             opts = {}
@@ -255,15 +256,25 @@ class OffAxisFilter(OffAxisMask):
 
         self._mask = np.sqrt(self._Fx ** 2 + self._Fy ** 2) < r_1
         self._ref = self.construct_reference(f1, M, N)
+        self._filter_radius = int(np.floor(r_1))
         return True
+
+    def _crop_filter(self, b):
+        m, n = b.shape
+        cy, cx = m / 2, n / 2
+        y_min = max(int(np.floor(cy - self._filter_radius)), 0)
+        y_max = min(int(np.floor(cy + self._filter_radius)), m)
+        x_min = max(int(np.floor(cx - self._filter_radius)), 0)
+        x_max = min(int(np.floor(cx + self._filter_radius)), n)
+        return b[y_min:y_max, x_min:x_max]
 
     def forwards(self, a):
         a = a * self._window
         return np.fft.fftshift(self._fft(a))
 
     def backwards(self, b):
-        if self._crop and not self._mask is None:
-            b = self._crop_to_mask(b)
+        if self._crop and self._filter_radius:
+            b = self._crop_filter(b)
         a = self._ifft(np.fft.ifftshift(b))
         return self.unpad_arr(a) if self._nb > 0 else a
 
@@ -282,26 +293,9 @@ class OffAxisFilter(OffAxisMask):
         X, Y = gridspace(N, M, 0, True)
         return reference_wave((X, Y), tilt, self._k0, self._sz)
 
-    def align_to_freq(self, f1, tilt_compensate_in='FP'):
-        self.reset()
-        if tilt_compensate_in == 'IP':
-            self._set_tilt_compensation(f1)
-        else:
-            self._mask, _, _ = self._calc_mask(f1)
-
-        if self._crop and not self._mask is None:
-            self._ifft.refactor(self.roi)
-        return True
-
-    def calibrate(self, fringes, radius=None, tilt_compensate_in='FP', auto=True, optimize=False, crop=False,
+    def calibrate(self, fringes, radius=None, auto=True, optimize=False, crop=False,
                   visualize=False, **kwargs):
 
-        if tilt_compensate_in.upper() != 'IP' and tilt_compensate_in.upper() != 'FP':
-            warn("Defaulting to compensating for tilt in Fourier plane.")
-            tilt_compensate_in = 'FP'
-        if not auto and tilt_compensate_in == 'IP':
-            warn("To use a manually selected mask, tilt compensation must be done in Fourier plane.")
-            tilt_compensate_in = 'FP'
         if not auto and optimize:
             warn("No optimization can be done if the manually selected mask is to be used.")
             optimize = False
@@ -325,11 +319,9 @@ class OffAxisFilter(OffAxisMask):
             except RuntimeError:
                 warn("Could not align to tilt.")
 
-        if tilt_compensate_in.upper() == 'IP':
-            self._set_tilt_compensation(f1, radius)
-
         self._crop = crop
-        if self._crop and not self._mask is None:
+        self._set_tilt_compensation(f1, radius)
+        if self._crop and self._filter_radius > 0:
             self._ifft.refactor((self.roi[2], self.roi[3]))
 
         if visualize:
