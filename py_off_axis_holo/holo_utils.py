@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from scipy import signal
+import zern.zern_core as zern
 
 def reference_wave(XY, tilt, k0, sz, A=1):
     k = k0 * np.sin(tilt)
@@ -120,3 +121,27 @@ def format_img(arr):
     diff = arr.max() - arr.min()
     img = cv2.convertScaleAbs(arr, alpha=255.0 / diff, beta=-arr.min() * 255.0 / diff)
     return img.astype('uint8', copy=False)
+
+def fit_zernike_poly(phase, Nzern=100):
+    assert phase.shape[0] == phase.shape[1], "Array dimensions must be invertible."
+
+    N = phase.shape[0]
+    x, y = np.linspace(-1, 1, N), np.linspace(-1, 1, N)
+    X, Y = np.meshgrid(x, y)
+    rho = np.sqrt(X**2 + Y**2)
+    mask = rho <= 2.0
+    theta = np.arctan2(X, Y)
+    rho_flat = rho[mask]
+    theta_flat = theta[mask]
+
+    z = zern.Zernike(mask=mask)
+    z.create_model_matrix(rho_flat, theta_flat, n_zernike=Nzern, mode='Jacobi', normalize_noll=True)
+
+    target = phase[mask]
+    H_f = z.model_matrix_flat
+    a = np.dot(H_f.T, target)
+    N = np.dot(H_f.T, H_f)
+    invN = np.linalg.inv(N)
+    fit_result_coef = np.dot(invN, a)
+    fit_map = z.get_zernike(fit_result_coef)
+    return fit_map

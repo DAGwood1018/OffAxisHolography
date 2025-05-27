@@ -108,7 +108,7 @@ def chain_propagation(method, field, dists, *args, direction=1, **kwargs):
 
 class Propagate(DFT, ABC):
 
-    def __init__(self, M, N, wl, sz, nb=1, threads=1, dtype='complex128', **kwargs):
+    def __init__(self, M, N, wl, sz, nb=0, threads=1, dtype='complex128', **kwargs):
         """
         :param M, N: Shape of 2D arrays to operate on.
         :type M, N: int
@@ -116,8 +116,8 @@ class Propagate(DFT, ABC):
         :type wl: float
         :param sz: Size of each grid point. Assumes sames dimension as wavelength.
         :type sz: float
-        :param nb: Padding factor to use. i.e. nb * dims = padded array shape. Default is '1'.
-        :type nb: float
+        :param nb: Padding to add to each array axis. Default is '0'.
+        :type nb: int
         :param threads: Number of threads to use. Default is '1'.
         :type threads: int
         :param dtype: Numpy dtype (complex) of arrays to operate on. Default is 'complex128'.
@@ -126,7 +126,7 @@ class Propagate(DFT, ABC):
         """
 
         super().__init__((M, N), nb, threads=threads, dtype=dtype, ortho=False, **kwargs)
-        self._X, self._Y = gridspace(N, M, 1, True)
+        self._X, self._Y = gridspace(N, M, 0, True)
         self._Fx, self._Fy = gridspace(N, M, nb, True)
         self._k0 = 2 * np.pi / wl
         self._sz = sz
