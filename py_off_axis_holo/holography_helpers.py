@@ -12,10 +12,14 @@ def ref_phase_shift(XY, tilt, k0, sz):
     k = k0 * np.sin(tilt)
     return np.exp(1j * sz * (k[0] * XY[0] + k[1] * XY[1]))
 
-def optimal_tilt(k0, sz, err=0.1):
-    kmax = np.pi / sz
-    k = (1 - err) * (2 * np.sqrt(2) / (3 + np.sqrt(2)) * kmax)
-    return np.arcsin(k / k0)
+def optimal_tilt(dims, k0, sz):
+    N, M = dims[0], dims[1]
+    fx = (8 * N + M - np.sqrt(8 * (N ** 2 + M ** 2) + 2 * N * M)) / 14
+    fy = (N + 8 * M - np.sqrt(8 * (N ** 2 + M ** 2) + 2 * N * M)) / 14
+
+    kx = 2 * np.pi * fx / (N * sz)
+    ky = 2 * np.pi * fy / (M * sz)
+    return - np.arcsin(np.array([kx, ky]) / k0)
 
 def res_limit(f1, dims, sz):
     M, N = dims
@@ -109,7 +113,7 @@ def unpad_arr(a, nb):
     slice_indices = tuple(slice(nb, -nb) for i in range(len(a.shape)))
     return a[slice_indices]
 
-def fit_zernike_poly(phase, Nzern=10):
+def fit_zernike_poly(phase, j_max=10):
     assert phase.shape[0] == phase.shape[1], "Array dimensions must be invertible."
 
     N = phase.shape[0]
@@ -122,7 +126,7 @@ def fit_zernike_poly(phase, Nzern=10):
     theta_flat = theta[mask]
 
     z = zern.Zernike(mask=mask)
-    z.create_model_matrix(rho_flat, theta_flat, n_zernike=Nzern, mode='Jacobi', normalize_noll=True)
+    z.create_model_matrix(rho_flat, theta_flat, n_zernike=j_max, mode='Jacobi', normalize_noll=True)
 
     target = phase[mask]
     H_f = z.model_matrix_flat
