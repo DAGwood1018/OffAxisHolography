@@ -5,7 +5,7 @@ import cv2
 
 from scipy.optimize import minimize
 from py_off_axis_holo.discrete_transforms import DFT
-from py_off_axis_holo.holo_utils import reference_wave, gridspace, format_img
+from py_off_axis_holo.holography_helpers import ref_phase_shift, gridspace, format_img
 from warnings import warn
 
 logging.basicConfig(level=logging.INFO,
@@ -205,7 +205,7 @@ class OffAxisFilter(OffAxisMask):
 
     def _min_k(self, f1, phi, X, Y):
         tilt = self._calc_tilt(f1)
-        R = reference_wave((X, Y), tilt, self._k0, self._sz)
+        R = ref_phase_shift((X, Y), tilt, self._k0, self._sz)
 
         f = R * np.exp(1j * phi)
         xvec = -1j * np.gradient(f, axis=0)
@@ -219,7 +219,7 @@ class OffAxisFilter(OffAxisMask):
 
     def _min_ksqr(self, f1, phi, X, Y):
         tilt = self._calc_tilt(f1)
-        R = reference_wave((X, Y), tilt, self._k0, self._sz)
+        R = ref_phase_shift((X, Y), tilt, self._k0, self._sz)
 
         f = R * np.exp(1j * phi)
         xvec = -1j * np.gradient(f, axis=0)
@@ -291,7 +291,7 @@ class OffAxisFilter(OffAxisMask):
     def construct_reference(self, f1, M, N):
         tilt = self._calc_tilt(f1)
         X, Y = gridspace(N, M, 0, True)
-        return reference_wave((X, Y), tilt, self._k0, self._sz)
+        return ref_phase_shift((X, Y), tilt, self._k0, self._sz)
 
     def calibrate(self, fringes, radius=None, auto=True, optimize=False, crop=False,
                   visualize=False, **kwargs):

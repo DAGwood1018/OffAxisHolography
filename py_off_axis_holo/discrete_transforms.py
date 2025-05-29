@@ -1,6 +1,6 @@
 import pyfftw
 import numpy as np
-from py_off_axis_holo.holo_utils import pad_arr, unpad_arr
+from py_off_axis_holo.holography_helpers import pad_arr, unpad_arr
 
 def fft(a, **kwargs):
     """
