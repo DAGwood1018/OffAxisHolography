@@ -15,11 +15,10 @@ logging.basicConfig(level=logging.INFO,
 
 class OffAxisMask(ABC, DFT):
 
-    def __init__(self, M, N, nb=0, threads=1, sqr_ar=False, dtype='complex128', **kwargs):
+    def __init__(self, M, N, nb=0, threads=1, dtype='complex128', **kwargs):
         super().__init__((M, N), nb, threads=threads, dtype=dtype, ortho=False, **kwargs)
         self._Fx, self._Fy = gridspace(N, M, nb, True)
         self._mask = None
-        self._sqr_ar = sqr_ar
 
     @property
     def masked(self):
