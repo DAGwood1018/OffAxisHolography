@@ -4,6 +4,7 @@ import logging
 import cv2
 
 from scipy.optimize import minimize
+from skimage.feature import peak_local_max
 from py_off_axis_holo.discrete_transforms import DFT
 from py_off_axis_holo.holography_helpers import ref_phase_shift, gridspace, format_img
 from warnings import warn
@@ -13,108 +14,54 @@ logging.basicConfig(level=logging.INFO,
                     handlers=[logging.FileHandler('hologram_filtering.log'),
                               logging.StreamHandler()])
 
-class OffAxisMask(ABC, DFT):
+class OffAxisMasking:
 
-    def __init__(self, M, N, nb=0, threads=1, dtype='complex128', **kwargs):
-        super().__init__((M, N), nb, threads=threads, dtype=dtype, ortho=False, **kwargs)
-        self._Fx, self._Fy = gridspace(N, M, nb, True)
-        self._mask = None
+    def __init__(self):
+        self._masks = None
 
-    @property
-    def masked(self):
-        if self._mask is None:
-            return False
-        else:
-            return True
-
-    @property
-    def roi(self):
-        if not self.masked:
-            return 0, 0, self._dims[0], self._dims[1]
-        coords = np.argwhere(self._mask)
-        m_min, n_min = coords.min(axis=0)
-        m_max, n_max = coords.max(axis=0)
-        return m_min, n_min, m_max - m_min + 1, n_max - n_min + 1
-
-    def _calc_mask(self, f1, radius=None):
-        """
-
-        :param f1: Frequency coords of +/-1 order in the form [fx, fy]
-        :return:
-        """
+    def __call__(self, Fh, scale_input=False, mask_radius=None):
+        if scale_input:
+            Fh = np.abs(Fh)**(1/4)
+        _, f1 = self.select_roi(Fh)
 
         r = np.sqrt(np.sum(np.array(f1) ** 2))
-        if radius is None:
+        if mask_radius is None:
             r_1 = r / 3
             r_DC = 2 * r_1
         else:
-            assert radius < r, "Radius of mask can not exceed distance from image center."
-            r_1 = radius
+            assert mask_radius < r, "Radius of mask can not exceed distance from image center."
+            r_1 = mask_radius
             r_DC = r - r_1
 
-        mask10 = np.sqrt((self._Fx - f1[0]) ** 2 + (self._Fy - f1[1]) ** 2) < r_1
-        mask01 = np.sqrt((self._Fx + f1[0]) ** 2 + (self._Fy + f1[1]) ** 2) < r_1
-        mask00 = np.sqrt(self._Fx ** 2 + self._Fy ** 2) < r_DC
-        return mask10, mask01, mask00
+        M, N = np.meshgrid(Fh.shape[0], Fh.shape[1], indexing='xy')
+        mask10 = np.sqrt((M - f1[0]) ** 2 + (N - f1[1]) ** 2) < r_1
+        mask01 = np.sqrt((M + f1[0]) ** 2 + (N + f1[1]) ** 2) < r_1
+        mask00 = np.sqrt(M ** 2 + N ** 2) < r_DC
+        self._masks = mask10, mask01, mask00
+        return self.masks
 
-    def _find_max(self, Fh):
-        """
-        Finds maximum value of a masked Fourier spectrum
+    @property
+    def masks(self):
+        return self._masks
 
-        :param Fh: Masked Fourier spectrum
-        :type Fh: array
-        :return: Indices of maximum in the form [fx, fy]
-        :rtype: ndarray
-        """
-
-        fy, fx = np.where(Fh == np.amax(Fh))
-        if len(fx) == 0:
-            raise RuntimeError("No maximum identified.")
-        if len(fx) > 1:
-            warn("Multiple maximums detected. Using median value.")
-            fx = np.median(fx)
-            fy = np.median(fy)
-
-        M, N = self.shape
-        rx, ry = N / (N - 2 * self._nb), M / (M - 2 * self._nb)
-        f = np.array([(fx - N / 2) / rx, (fy - M / 2) / ry])
-        return f.reshape(f.size, )
-
-    def _select_roi(self, Fh, auto=False):
+    @classmethod
+    def select_roi(cls, Fh):
         Fh_img = format_img(Fh)
 
-        cv2.namedWindow('spfilter_roi_selector', cv2.WINDOW_NORMAL)
-        cv2.setWindowTitle('spfilter_roi_selector', 'Select Order of Interest')
-        ROI = cv2.selectROI('spfilter_roi_selector', Fh_img, fromCenter=True)
+        cv2.namedWindow('Masking', cv2.WINDOW_NORMAL)
+        cv2.setWindowTitle('Masking', 'Select Off-axis Order of Interest')
+        ROI = cv2.selectROI('Masking', Fh_img, fromCenter=True)
 
-        roi_mask = np.zeros(self.shape)
+        roi_mask = np.zeros(Fh_img.shape)
         roi_mask[int(ROI[1]):int(ROI[1] + ROI[3]), int(ROI[0]): int(ROI[0] + ROI[2])] = 1
 
-        M, N = self._dims
-        fx = int(ROI[0] + ROI[2] // 2) - N / 2
-        fy = int(ROI[1] + ROI[3] // 2) - M / 2
-        rx, ry = N / (N - 2 * self._nb), M / (M - 2 * self._nb)
-        f1 = np.array([fx / rx, fy / ry])
+        peaks = peak_local_max(Fh_img * roi_mask, min_distance=min([ROI[2], ROI[3]]))
+        assert len(peaks) == 1, "Failed to identify a single peak. Try a different ROI."
+        f1 = peaks[0]
 
-        if auto:
-            try:
-                f1 = self._find_max(Fh * roi_mask)
-            except RuntimeError:
-                warn("Failed to automatically find peak. Resorting to chosen center.")
-
-        cv2.destroyWindow('spfilter_roi_selector')
+        cv2.destroyWindow('Masking')
         logging.info(f'Selected ROI centered at a tilt of ({f1[0]}, {f1[1]}).')
         return roi_mask, f1
-
-    def alignment_mask(self, right=True):
-        M, N = self._dims
-        fx = (8 * N + M - np.sqrt(8 * (N ** 2 + M ** 2) + 2 * N * M)) / 14
-        fy = (N + 8 * M - np.sqrt(8 * (N ** 2 + M ** 2) + 2 * N * M)) / 14
-
-        sign = -1 if right else 1
-        f1_opt = (fx, sign * fy)
-        mask10, mask01, mask00 = self._calc_mask(f1_opt)
-        return mask10 + mask01 + mask00, f1_opt
 
     @classmethod
     def crop_to_mask(cls, a, mask):
@@ -124,7 +71,7 @@ class OffAxisMask(ABC, DFT):
         return a[m_min:m_max + 1, n_min:n_max + 1]
 
 
-class OffAxisFilter(OffAxisMask):
+class OffAxisFilter(DFT):
 
     def __init__(self, M, N, wl, sz, nb=0, threads=1, dtype='complex128', **kwargs):
         """
