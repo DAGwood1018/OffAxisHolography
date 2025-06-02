@@ -43,6 +43,12 @@ def tukey_window(dims, alpha=0.5):
         window = np.tensordot(window, wn, axes=0)
     return window
 
+def crop_to_mask(a, mask):
+    coords = np.argwhere(mask)
+    m_min, n_min = coords.min(axis=0)
+    m_max, n_max = coords.max(axis=0)
+    return a[m_min:m_max + 1, n_min:n_max + 1]
+
 def gridspace(N, M, nb=0, center=False):
     """
     :param N, M: Shape of 2D arrays to operate on.
@@ -112,6 +118,7 @@ def unpad_arr(a, nb):
         return a
     slice_indices = tuple(slice(nb, -nb) for i in range(len(a.shape)))
     return a[slice_indices]
+
 
 def fit_zernike_poly(phase, j_max=10):
     assert phase.shape[0] == phase.shape[1], "Array dimensions must be invertible."
