@@ -234,7 +234,7 @@ class OffAxisFilter(DFT):
         Fh = self.forwards(fringes)
         _, f10 = select_mask_roi(Fh, True)
         self._masks = off_axis_masks(Fh, f10=f10, mask_radius=mask_radius)
-        freq = [f10[0] - Fh.shape[0] / 2, f10[1] - Fh.shape[1] / 2]
+        freq = [f10[1] - Fh.shape[1] / 2, f10[0] - Fh.shape[0] / 2]
 
         if optimize:
             try:
