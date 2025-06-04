@@ -200,12 +200,14 @@ class OffAxisFilter(DFT):
         return True
 
     def forwards(self, a):
+        a = np.array(a).astype('complex128', casting='safe')
         if self._nb > 0:
             a = self.pad_arr(a)
         a *= self._window
         return np.fft.fftshift(self._fft(a))
 
     def backwards(self, b):
+        b = np.array(b).astype('complex128', casting='safe')
         a = self._ifft(np.fft.ifftshift(b))
         return self.unpad_arr(a) if self._nb > 0 else a
 
