@@ -186,7 +186,7 @@ class OffAxisFilter(DFT):
         Fh = self.forwards(fringes)
         Fh = format_img(np.abs(Fh)**(1/4))
 
-        cv2.namedWindow('M', cv2.WINDOW_NORMAL)
+        cv2.namedWindow('visualize_roi', cv2.WINDOW_NORMAL)
         cv2.imshow('visualize_roi', Fh)
         cv2.waitKey(1500)
         if self._ref is None:
