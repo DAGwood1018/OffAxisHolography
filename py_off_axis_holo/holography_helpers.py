@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 from scipy import signal
-import zern.zern_core as zern
 
 def format_img(arr):
     diff = arr.max() - arr.min()
@@ -119,27 +118,30 @@ def unpad_arr(a, nb):
     slice_indices = tuple(slice(nb, -nb) for i in range(len(a.shape)))
     return a[slice_indices]
 
+def pad_to_square(image):
+    """
+    Pads a 2D image (NumPy array) to make it square.
 
-def fit_zernike_poly(phase, j_max=10):
-    assert phase.shape[0] == phase.shape[1], "Array dimensions must be invertible."
+    Parameters:
+        image (ndarray): 2D input image.
 
-    N = phase.shape[0]
-    x, y = np.linspace(-1, 1, N), np.linspace(-1, 1, N)
-    X, Y = np.meshgrid(x, y)
-    rho = np.sqrt(X**2 + Y**2)
-    mask = rho <= 2.0
-    theta = np.arctan2(X, Y)
-    rho_flat = rho[mask]
-    theta_flat = theta[mask]
+    Returns:
+        padded_image (ndarray): Square padded image.
+    """
 
-    z = zern.Zernike(mask=mask)
-    z.create_model_matrix(rho_flat, theta_flat, n_zernike=j_max, mode='Jacobi', normalize_noll=True)
+    h, w = image.shape
+    if h == w:
+        return image
 
-    target = phase[mask]
-    H_f = z.model_matrix_flat
-    a = np.dot(H_f.T, target)
-    N = np.dot(H_f.T, H_f)
-    invN = np.linalg.inv(N)
-    fit_result_coef = np.dot(invN, a)
-    fit_map = z.get_zernike(fit_result_coef)
-    return fit_map
+    size = max(h, w)
+    pad_h = (size - h) // 2
+    pad_w = (size - w) // 2
+
+    padded_image = np.pad(
+        image,
+        ((pad_h, size - h - pad_h), (pad_w, size - w - pad_w)),
+        mode='constant',
+        constant_values=0
+    )
+    return padded_image
+

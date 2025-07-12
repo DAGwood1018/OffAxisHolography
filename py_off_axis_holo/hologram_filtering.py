@@ -74,10 +74,14 @@ class OffAxisFilter(DFT):
         self._sz = sz
         self._masks = None
         self._ref = None
-        self._filter_radius = 0
         self._window = np.ones(self.input_shape)
 
     def __call__(self, fringes):
+        """
+        :param fringes:
+        :return:
+        """
+
         if not self.masked:
             self.calibrate(fringes)
 
@@ -132,31 +136,34 @@ class OffAxisFilter(DFT):
         fy = M * self._sz * k[1] / (2 * np.pi)
         return np.array([fx, fy])
 
-    def _min_k(self, f, field, X, Y):
+    def _min_tilt(self, f, field, X, Y):
+        """
+        :param f:
+        :param field:
+        :param X:
+        :param Y:
+        :return:
+        """
+
         tilt = self._calc_tilt(f)
         R = ref_phase_shift((X, Y), tilt, self._k0, self._sz)
 
-        f = R * field / np.abs(field)
-        xvec = -1j * np.gradient(f, axis=0)
-        yvec = -1j * np.gradient(f, axis=1)
-        xvec *= np.conjugate(f)
-        yvec *= np.conjugate(f)
-
-        x = xvec.sum()
-        y = yvec.sum()
-        return np.absolute(x) ** 2 + np.absolute(y) ** 2
-
-    def _min_ksqr(self, f, field, X, Y):
-        tilt = self._calc_tilt(f)
-        R = ref_phase_shift((X, Y), tilt, self._k0, self._sz)
-
-        f = R * field / np.abs(field)
-        xvec = -1j * np.gradient(f, axis=0)
-        yvec = -1j * np.gradient(f, axis=1)
+        f = R * field / np.abs(field)**2
+        xvec, yvec = -1j * np.gradient(f)
         mag = np.absolute(xvec) ** 2 + np.absolute(yvec) ** 2
         return mag.sum()
 
-    def _optimize_tilt(self, f, phase, method='TNC', tol=1e-6, step=None, opts=None):
+    def _optimize_tilt(self, f, phase, method='Nelder-Mead', tol=1e-8, step=None, opts=None):
+        """
+        :param f:
+        :param phase:
+        :param method:
+        :param tol:
+        :param step:
+        :param opts:
+        :return:
+        """
+
         if not self.masked:
             raise RuntimeError("Must have masks calibrated to optimize tilt compensation.")
 
@@ -175,12 +182,17 @@ class OffAxisFilter(DFT):
             bounds = [(f[0] - step, f[0] + step), (f[1] - step, f[1] + step)]
         else:
             bounds = None
-        res = minimize(self._min_ksqr, f, args=(field, X, Y),
+        res = minimize(self._min_tilt, f, args=(field, X, Y),
                        method=method, bounds=bounds, tol=tol, options=opts)
         logging.info("Optimization Routine Complete.")
         return np.array(res.x)
 
     def _visualize_roi(self, fringes):
+        """
+        :param fringes:
+        :return:
+        """
+
         if not self._ref is None:
             fringes = fringes * self._ref
         Fh = self.forwards(fringes)
@@ -200,6 +212,11 @@ class OffAxisFilter(DFT):
         return True
 
     def forwards(self, a):
+        """
+        :param a:
+        :return:
+        """
+
         a = np.array(a).astype('complex128', casting='safe')
         if self._nb > 0:
             a = self.pad_arr(a)
@@ -207,11 +224,22 @@ class OffAxisFilter(DFT):
         return np.fft.fftshift(self._fft(a))
 
     def backwards(self, b):
+        """
+        :param b:
+        :return:
+        """
+
         b = np.array(b).astype('complex128', casting='safe')
         a = self._ifft(np.fft.ifftshift(b))
         return self.unpad_arr(a) if self._nb > 0 else a
 
     def add_window(self, window_fcn, **kwargs):
+        """
+        :param window_fcn:
+        :param kwargs:
+        :return:
+        """
+
         if callable(window_fcn):
             try:
                 self._window = window_fcn(self.input_shape, **kwargs)
@@ -222,11 +250,27 @@ class OffAxisFilter(DFT):
         return False
 
     def construct_reference(self, f, M, N):
+        """
+        :param f:
+        :param M:
+        :param N:
+        :return:
+        """
+
         tilt = self._calc_tilt(f)
         X, Y = gridspace(N, M, 0, True)
         return ref_phase_shift((X, Y), tilt, self._k0, self._sz)
 
     def calibrate(self, fringes, mask_radius=None, optimize=True, use_ref=True, visualize=False, **kwargs):
+        """
+        :param fringes:
+        :param mask_radius:
+        :param optimize:
+        :param use_ref:
+        :param visualize:
+        :param kwargs:
+        :return:
+        """
 
         self.reset()
         Fh = self.forwards(fringes)
