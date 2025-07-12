@@ -118,3 +118,29 @@ def unpad_arr(a, nb):
     slice_indices = tuple(slice(nb, -nb) for i in range(len(a.shape)))
     return a[slice_indices]
 
+def pad_to_square(image):
+    """
+    Pads a 2D image (NumPy array) to make it square.
+
+    Parameters:
+        image (ndarray): 2D input image.
+
+    Returns:
+        padded_image (ndarray): Square padded image.
+    """
+
+    h, w = image.shape
+    if h == w:
+        return image
+
+    size = max(h, w)
+    pad_h = (size - h) // 2
+    pad_w = (size - w) // 2
+
+    padded_image = np.pad(
+        image,
+        ((pad_h, size - h - pad_h), (pad_w, size - w - pad_w)),
+        mode='constant',
+        constant_values=0
+    )
+    return padded_image
