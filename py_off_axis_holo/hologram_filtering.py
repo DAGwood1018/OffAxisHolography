@@ -131,25 +131,11 @@ class OffAxisFilter(DFT):
         fy = M * self._sz * k[1] / (2 * np.pi)
         return np.array([fx, fy])
 
-    def _min_k(self, f, field, X, Y):
+    def _min_tilt(self, f, field, X, Y):
         tilt = self._calc_tilt(f)
         R = ref_phase_shift((X, Y), tilt, self._k0, self._sz)
 
-        f = R * field / np.abs(field)
-        xvec = -1j * np.gradient(f, axis=0)
-        yvec = -1j * np.gradient(f, axis=1)
-        xvec *= np.conjugate(f)
-        yvec *= np.conjugate(f)
-
-        x = xvec.sum()
-        y = yvec.sum()
-        return np.absolute(x) ** 2 + np.absolute(y) ** 2
-
-    def _min_ksqr(self, f, field, X, Y):
-        tilt = self._calc_tilt(f)
-        R = ref_phase_shift((X, Y), tilt, self._k0, self._sz)
-
-        f = R * field / np.abs(field)
+        f = R * field / np.abs(field)**2
         xvec = -1j * np.gradient(f, axis=0)
         yvec = -1j * np.gradient(f, axis=1)
         mag = np.absolute(xvec) ** 2 + np.absolute(yvec) ** 2
@@ -174,7 +160,7 @@ class OffAxisFilter(DFT):
             bounds = [(f[0] - step, f[0] + step), (f[1] - step, f[1] + step)]
         else:
             bounds = None
-        res = minimize(self._min_ksqr, f, args=(field, X, Y),
+        res = minimize(self._min_tilt, f, args=(field, X, Y),
                        method=method, bounds=bounds, tol=tol, options=opts)
         logging.info("Optimization Routine Complete.")
         return np.array(res.x)
