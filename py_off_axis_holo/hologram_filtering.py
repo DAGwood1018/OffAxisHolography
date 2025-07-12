@@ -149,7 +149,8 @@ class OffAxisFilter(DFT):
         R = ref_phase_shift((X, Y), tilt, self._k0, self._sz)
 
         f = R * field / np.abs(field)**2
-        xvec, yvec = -1j * np.gradient(f)
+        xvec = -1j * np.gradient(f, axis=0)
+        yvec = -1j * np.gradient(f, axis=1)
         mag = np.absolute(xvec) ** 2 + np.absolute(yvec) ** 2
         return mag.sum()
 
