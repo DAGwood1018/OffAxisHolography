@@ -74,7 +74,6 @@ class OffAxisFilter(DFT):
         self._sz = sz
         self._masks = None
         self._ref = None
-        self._filter_radius = 0
         self._window = np.ones(self.input_shape)
 
     def __call__(self, fringes):
