@@ -48,13 +48,13 @@ def off_axis_masks(Fh, f10=None, mask_radius=None, scale_input=False):
     cy, cx = Fh.shape[0] / 2, Fh.shape[1] / 2
     f01 = Fh.shape - f10
     Fy, Fx = np.ogrid[:Fh.shape[0], :Fh.shape[1]]
-    r = np.floor(np.sqrt(np.sum(np.array([f10[0] - cy, f10[1] - cx]) ** 2)))
+    r = np.sqrt(np.sum(np.array([f10[0] - cy, f10[1] - cx]) ** 2))
     if mask_radius is None:
         r_1 = r / 3
     else:
         assert mask_radius < r, "Radius of mask can not exceed distance from image center."
         r_1 = mask_radius
-    r_1 = int(np.floor(r_1))
+
     mask10 = np.sqrt((Fx - f10[1]) ** 2 + (Fy - f10[0]) ** 2) <= r_1
     mask01 = np.sqrt((Fx - f01[1]) ** 2 + (Fy - f01[0]) ** 2) <= r_1
     mask00 = np.sqrt((Fx - cx) ** 2 + (Fy - cy) ** 2) <= r_1
@@ -74,7 +74,8 @@ class OffAxisFilter(DFT):
         self._sz = sz
         self._masks = None
         self._ref = None
-        self._window = np.ones(self.input_shape)
+        self._filter_radius = 0
+        self._window = np.ones(self._dims)
 
     def __call__(self, fringes):
         if not self.masked:
@@ -131,28 +132,39 @@ class OffAxisFilter(DFT):
         fy = M * self._sz * k[1] / (2 * np.pi)
         return np.array([fx, fy])
 
-    def _min_tilt(self, f, field, X, Y):
+    def _min_k(self, f, phi, X, Y):
         tilt = self._calc_tilt(f)
         R = ref_phase_shift((X, Y), tilt, self._k0, self._sz)
 
-        f = R * field / np.abs(field)**2
+        f = R * np.exp(1j * phi)
+        xvec = -1j * np.gradient(f, axis=0)
+        yvec = -1j * np.gradient(f, axis=1)
+        xvec *= np.conjugate(f)
+        yvec *= np.conjugate(f)
+
+        x = xvec.sum()
+        y = yvec.sum()
+        return np.absolute(x) ** 2 + np.absolute(y) ** 2
+
+    def _min_ksqr(self, f, phi, X, Y):
+        tilt = self._calc_tilt(f)
+        R = ref_phase_shift((X, Y), tilt, self._k0, self._sz)
+
+        f = R * np.exp(1j * phi)
         xvec = -1j * np.gradient(f, axis=0)
         yvec = -1j * np.gradient(f, axis=1)
         mag = np.absolute(xvec) ** 2 + np.absolute(yvec) ** 2
         return mag.sum()
 
     def _optimize_tilt(self, f, phase, method='TNC', tol=1e-6, step=None, opts=None):
-        if not self.masked:
-            raise RuntimeError("Must have masks calibrated to optimize tilt compensation.")
-
         logging.info("Aligning Mask to Inferred Tilt...")
         M, N = self._dims
         X, Y = gridspace(N, M, 0, True)
 
-        Fh = self.forwards(phase) * self._masks[0]
-        if tuple(self.output_shape) != tuple(Fh.shape):
-            self._ifft.refactor(Fh.shape)
-        field = self.backwards(Fh)
+        if self.masked:
+            phase = crop_to_mask(phase, self._masks[0])
+            X = crop_to_mask(X, self._masks[0])
+            Y = crop_to_mask(Y, self._masks[0])
 
         if opts is None:
             opts = {}
@@ -160,10 +172,19 @@ class OffAxisFilter(DFT):
             bounds = [(f[0] - step, f[0] + step), (f[1] - step, f[1] + step)]
         else:
             bounds = None
-        res = minimize(self._min_tilt, f, args=(field, X, Y),
+        res = minimize(self._min_ksqr, f, args=(phase, X, Y),
                        method=method, bounds=bounds, tol=tol, options=opts)
         logging.info("Optimization Routine Complete.")
         return np.array(res.x)
+
+    def _crop_filter(self, b):
+        m, n = b.shape
+        cy, cx = m / 2, n / 2
+        y_min = max(int(np.floor(cy - self._filter_radius)), 0)
+        y_max = min(int(np.floor(cy + self._filter_radius)), m)
+        x_min = max(int(np.floor(cx - self._filter_radius)), 0)
+        x_max = min(int(np.floor(cx + self._filter_radius)), n)
+        return b[y_min:y_max, x_min:x_max]
 
     def _visualize_roi(self, fringes):
         if not self._ref is None:
@@ -171,7 +192,7 @@ class OffAxisFilter(DFT):
         Fh = self.forwards(fringes)
         Fh = format_img(np.abs(Fh)**(1/4))
 
-        cv2.namedWindow('visualize_roi', cv2.WINDOW_NORMAL)
+        cv2.namedWindow('M', cv2.WINDOW_NORMAL)
         cv2.imshow('visualize_roi', Fh)
         cv2.waitKey(1500)
         if self._ref is None:
@@ -185,14 +206,10 @@ class OffAxisFilter(DFT):
         return True
 
     def forwards(self, a):
-        a = np.array(a).astype('complex128', casting='safe')
-        if self._nb > 0:
-            a = self.pad_arr(a)
-        a *= self._window
+        a = a * self._window
         return np.fft.fftshift(self._fft(a))
 
     def backwards(self, b):
-        b = np.array(b).astype('complex128', casting='safe')
         a = self._ifft(np.fft.ifftshift(b))
         return self.unpad_arr(a) if self._nb > 0 else a
 
@@ -221,7 +238,9 @@ class OffAxisFilter(DFT):
 
         if optimize:
             try:
-                freq = self._optimize_tilt(freq, fringes, **kwargs)
+                Fh = self.forwards(fringes) * self._masks[0]
+                phi = np.angle(self.backwards(Fh))
+                freq = self._optimize_tilt(freq, phi, **kwargs)
             except RuntimeError:
                 warn("Could not align to tilt.")
 
@@ -234,6 +253,6 @@ class OffAxisFilter(DFT):
     def reset(self):
         self._masks = None
         self._ref = None
-        self._window = np.ones(self.input_shape)
+        self._window = np.ones(self._dims)
         self._ifft.refactor(self.input_shape)
         return self

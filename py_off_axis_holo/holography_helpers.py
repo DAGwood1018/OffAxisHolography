@@ -144,3 +144,4 @@ def pad_to_square(image):
         constant_values=0
     )
     return padded_image
+
