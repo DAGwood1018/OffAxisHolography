@@ -4,6 +4,7 @@ from copy import copy
 from py_off_axis_holo.holography_helpers import gridspace
 from py_off_axis_holo.discrete_transforms import DFT
 
+
 def fresnel(field, z, wl, sz, **kwargs):
     """
     Performs Fresnel propagation. Consistent units assumed.
@@ -24,6 +25,7 @@ def fresnel(field, z, wl, sz, **kwargs):
     Nx, Ny = field.shape
     prop = Fresnel(Nx, Ny, wl, sz, **kwargs)
     return prop.propagate(field, z)
+
 
 def angular_spectrum(field, z, wl, sz, **kwargs):
     """
@@ -46,25 +48,28 @@ def angular_spectrum(field, z, wl, sz, **kwargs):
     prop = AngularSpectrum(Nx, Ny, wl, sz, **kwargs)
     return prop.propagate(field, z)
 
-def rep_propagation(method, field, dists, *args, **kwargs):
+
+def rep_propagation(field, dists, wl, sz, method='Fresnel', **kwargs):
     """
     Performs numerical propagation independently for a number of distances.
 
-    :param method: Method to use.
-    :type method: Propagate
     :param field: Complex field to propagate.
     :type field: ndarray<complex>
     :param dists: Distances to propagate to.
     :type dists: list<float>
-    :param args: Method specific arguments.
+    :param wl: Wavelength of light.
+    :type wl: float
+    :param sz: Size of each grid point. Assumes sames dimension as wavelength.
+    :type sz: float
+    :param method: Method to use. If not 'Fresnel' then defaults to 'AngularSpectrum'.
+    :type method: str
     :param kwargs: Method specific optional arguments.
     :return: Distances and propagated fields.
     :rtype: list<float>, list<ndarray>
     """
 
-    assert issubclass(method, Propagate), "Method must implement Propagate abstract class."
     Nx, Ny = field.shape
-    prop = method(Nx, Ny, *args, **kwargs)
+    prop = Fresnel(Nx, Ny, wl, sz, **kwargs) if method == 'Fresnel' else AngularSpectrum(Nx, Ny, wl, sz, **kwargs)
 
     recs = []
     for i, dist in enumerate(dists):
@@ -72,31 +77,34 @@ def rep_propagation(method, field, dists, *args, **kwargs):
         recs.append(f)
     return dists, recs
 
-def chain_propagation(method, field, dists, *args, direction=1, **kwargs):
+
+def chain_propagation(field, dists, wl, sz, method='Fresnel', direction=1, **kwargs):
     """
     Performs numerical propagation sequentially in a direction for a number of distances.
 
-    :param method: Method to use.
-    :type method: Propagate
     :param field: Complex field to propagate.
     :type field: ndarray<complex>
     :param dists: Distances to propagate to.
     :type dists: list<float>
-    :param args: Method specific arguments.
+    :param wl: Wavelength of light.
+    :type wl: float
+    :param sz: Size of each grid point. Assumes sames dimension as wavelength.
+    :type sz: float
     :param direction: Direction to propagate. +1 for z or -1 for -z. Default is '1'.
     :rtype direction: int
+    :param method: Method to use. If not 'Fresnel' then defaults to 'AngularSpectrum'.
+    :type method: str
     :param kwargs: Method specific optional arguments.
     :return: Distances and propagated fields.
     :rtype: list<float>, list<ndarray>
     """
 
-    assert issubclass(method, Propagate), "Method must implement Propagate abstract class."
     dists = set(np.abs(dists))
     direction = 1 if direction >= 0 else -1
     dists = direction * np.sort(list(dists))
 
     Nx, Ny = field.shape
-    prop = method(Nx, Ny, *args, **kwargs)
+    prop = Fresnel(Nx, Ny, wl, sz, **kwargs) if method == 'Fresnel' else AngularSpectrum(Nx, Ny, wl, sz, **kwargs)
 
     d0 = 0
     recs = []
@@ -105,6 +113,7 @@ def chain_propagation(method, field, dists, *args, direction=1, **kwargs):
         d0 = dist
         recs.append(field)
     return dists, recs
+
 
 class Propagate(DFT, ABC):
 
@@ -157,7 +166,7 @@ class Propagate(DFT, ABC):
         :rtype: ndarray<float>, ndarray<float>
         """
 
-        dy2, dx2 = tuple(2 * np.pi * z / (np.array(self._dims) * self._sz * self._k0))
+        dy2, dx2 = tuple(2 * np.pi * z / (self.input_shape * self._sz * self._k0))
         x2 = self._X * dx2
         y2 = self._Y * dy2
         return x2, y2
@@ -170,7 +179,7 @@ class Propagate(DFT, ABC):
         :rtype: ndarray<float>, ndarray<float>
         """
 
-        dky, dkx = tuple(2 * np.pi / (np.array(self._dims) * self._sz))
+        dky, dkx = tuple(2 * np.pi / (self.output_shape * self._sz))
         kx = self._Fx * dkx
         ky = self._Fy * dky
         return kx, ky
@@ -191,14 +200,15 @@ class Fresnel(Propagate):
         :rtype: ndarray<complex>
         """
 
-        assert field.shape == tuple(self._dims), "Dimensions must match."
+        assert field.shape == tuple(self.input_shape), "Dimensions must match."
         x2, y2 = self._object_plane(z)
         x1, y1 = self._image_plane()
 
         z_phase = (-1j * self._k0 / (2 * np.pi * z)) * np.exp(1j * self._k0 * z)
-        out_phase = np.exp((1j * self._k0 / (2 * z)) * (x2**2 + y2**2))
-        in_phase = np.exp((1j * self._k0 / (2 * z)) * (x1**2 + y1**2))
+        out_phase = np.exp((1j * self._k0 / (2 * z)) * (x2 ** 2 + y2 ** 2))
+        in_phase = np.exp((1j * self._k0 / (2 * z)) * (x1 ** 2 + y1 ** 2))
         return z_phase * out_phase * self.forwards(field * in_phase)
+
 
 class AngularSpectrum(Propagate):
 
@@ -215,9 +225,9 @@ class AngularSpectrum(Propagate):
         :rtype: ndarray<complex>
         """
 
-        assert field.shape == tuple(self._dims), "Dimensions must match."
+        assert field.shape == tuple(self.input_shape), "Dimensions must match."
         kx, ky = self._fourier_plane()
         Fh = self.forwards(field)
-        kz = self._k0 - (kx**2 + ky**2) / (2 * self._k0)
+        kz = self._k0 - (kx ** 2 + ky ** 2) / (2 * self._k0)
         H = np.exp(1j * z * kz)
         return self.backwards(Fh * H)
