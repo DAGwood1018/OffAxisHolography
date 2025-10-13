@@ -39,6 +39,7 @@ def select_mask_roi(Fh, scale_input=False):
     return roi_mask, f1
 
 def off_axis_masks(Fh, f10=None, mask_radius=None, scale_input=False):
+    f10 = np.array(f10)
     if f10 is None:
         _, f10 = select_mask_roi(Fh, scale_input)
     else:
@@ -109,7 +110,7 @@ class OffAxisFilter(DFT):
         field = self.backwards(Fh)
         if self_RCH:
             RCH_field = self.backwards(RCH)
-            field /= RCH_field
+            field *= np.exp(-1j*np.angle(RCH_field))
         return field if bckgrnd is None else field / bckgrnd
 
     @property

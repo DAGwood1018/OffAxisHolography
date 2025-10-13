@@ -361,3 +361,108 @@ class DFT:
             return self.unpad_arr(a)
         return a
 
+class DFT:
+
+    def __init__(self, dims, nb=0, threads=1, ortho=False, re=False, dtype='complex128', **kwargs):
+        """
+        Class for performing discrete fourier transforms.
+
+        :param dims: New dimension of ndarray to operate on.
+        :type dims: int
+        :param nb: Number of zeros to pad array dimensions by. Default is '0'.
+        :type nb: int
+        :param threads: Number of threads to use. Default is '1'.
+        :type threads: int
+        :param ortho: Whether to use orthonormal normalization. Default is 'False'
+        :type ortho: bool
+        :param re: Whether a real discrete transform should be used or not.
+        :type re: bool
+        :param dtype: Numpy dtype (complex) of arrays to operate on. Default is 'complex128'.
+        :type dtype: string
+        :param kwargs: Optional arguments for DiscreteTransform object.
+        """
+
+        assert type(nb) is int, "Padding must be given as an integer."
+        padded_shape = 2 * nb + np.array(dims)
+        if np.issubdtype(np.dtype(dtype), np.complexfloating) and re:
+            dtype = 'float64'
+
+        self._nb = nb
+        self._ortho = ortho
+        self._fft = FFT(padded_shape, threads=threads, dtype=dtype, **kwargs) if not re else \
+            DCT(padded_shape, threads=threads, dtype=dtype, **kwargs)
+        self._ifft = IFFT(padded_shape, threads=threads, dtype=dtype, **kwargs) if not re else \
+            IDCT(padded_shape, threads=threads, dtype=dtype, **kwargs)
+
+    @property
+    def input_shape(self):
+        """
+        :return: Shape of input array. Accounts for padding.
+        :rtype: tuple<int>
+        """
+
+        return tuple(self._fft.shape)
+
+    @property
+    def output_shape(self):
+        """
+        :return: Shape of output array. Accounts for padding.
+        :rtype: tuple<int>
+        """
+
+        return tuple(self._ifft.shape)
+
+    def pad_arr(self, a):
+        """
+        Adds padding to arrays.
+
+        :param a: Input array.
+        :type a: ndarray<complex>
+        :return: Padding array.
+        :rtype: ndarray<complex>
+        """
+
+        return pad_arr(a, self._nb)
+
+    def unpad_arr(self, a):
+        """
+        Removes array padding.
+
+        :param a: Input array.
+        :type a: ndarray<complex>
+        :return: Padding array.
+        :rtype: ndarray<complex>
+        """
+
+        return unpad_arr(a, self._nb)
+
+    def forwards(self, a):
+        """
+        Forward Fourier transform
+
+        :param a: Array to transform
+        :type a: ndarray<complex>
+        :return: Transformed array.
+        :rtype: ndarray<complex>
+        """
+
+        if self._nb > 0:
+            a = self.pad_arr(a)
+        assert tuple(a.shape) == self.input_shape, "Shape of array must be " + str(self.input_shape)
+        return np.fft.fftshift(self._fft(a, ortho=self._ortho, normalise_idft=False))
+
+    def backwards(self, b):
+        """
+        Inverse Fourier transform
+
+        :param b: Array to transform
+        :type b: ndarray<complex>
+        :return: Transformed array.
+        :rtype: ndarray<complex>
+        """
+
+        assert tuple(b.shape) == self.output_shape, "Shape of array must be " + str(self.output_shape)
+        a = self._ifft(np.fft.ifftshift(b), ortho=self._ortho, normalise_idft=False)
+        if self._nb > 0:
+            return self.unpad_arr(a)
+        return a
