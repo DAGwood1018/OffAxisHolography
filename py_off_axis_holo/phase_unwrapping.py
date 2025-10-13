@@ -6,6 +6,10 @@ def wrap_to_pi(phi):
     phi = phi - 2 * np.pi * np.floor((phi + np.pi) / (2 * np.pi))
     return phi
 
+def dist(a, b):
+    a, b = np.array(a), np.array(b)
+    return np.linalg.norm(a - b)
+
 def discrete_residue(F):
     """
     Vectorized computation of:
@@ -15,15 +19,104 @@ def discrete_residue(F):
     F = np.asarray(F)
 
     # compute the terms for interior points
-    term1 = F[:-1, 1:] - F[:-1, :-1]
-    term2 = F[1:, 1:] - F[:-1, 1:]
-    term3 = F[1:, :-1] - F[1:, 1:]
-    term4 = F[:-1, :-1] - F[1:, :-1]
+    term1 = wrap_to_pi(F[:-1, 1:] - F[:-1, :-1])
+    term2 = wrap_to_pi(F[1:, 1:] - F[:-1, 1:])
+    term3 = wrap_to_pi(F[1:, :-1] - F[1:, 1:])
+    term4 = wrap_to_pi(F[:-1, :-1] - F[1:, :-1])
 
     val = (term1 + term2 + term3 + term4) / (2 * np.pi)
     res = np.zeros_like(F, dtype=float)
     res[:-1, :-1] = np.round(val)
     return res
+
+def find_branch_cut(A):
+    # Get coords of residues
+    neg_coords = np.argwhere(A == -1)
+    pos_coords = np.argwhere(A == 1)
+
+    # If no residues stop
+    if len(neg_coords) == 0 and len(pos_coords) == 0:
+        return []
+
+    # Find border coords
+    border_mask = np.zeros_like(A, dtype=bool)
+    border_mask[0, :] = border_mask[-1, :] = border_mask[:, 0] = border_mask[:, -1] = True
+    border_coords = np.argwhere(border_mask)
+
+    # Label all points based on type
+    neg_ids = [tuple(p) for p in neg_coords]
+    pos_ids = [tuple(p) for p in pos_coords]
+    border_ids = [tuple(p) for p in border_coords]
+    all_points = neg_ids + pos_ids + border_ids
+
+    types = (
+        ['-'] * len(neg_ids)
+        + ['+'] * len(pos_ids)
+        + ['B'] * len(border_ids)
+    )
+
+    # Create distance matrix
+    n = len(all_points)
+    dist_matrix = np.full((n, n), np.inf)
+
+    # Precompute mapping index
+    point_to_idx = {p: i for i, p in enumerate(all_points)}
+
+    # Fill distance matrix for valid pairs only
+    for i in range(n):
+        for j in range(i + 1, n):
+            t1, t2 = types[i], types[j]
+            valid = (
+                (t1 == 'neg' and t2 in {'pos', 'border'})
+                or (t1 == 'pos' and t2 in {'neg', 'border'})
+                or (t1 == 'border' and t2 in {'neg', 'pos'})
+            )
+            if valid:
+                d = dist(all_points[i], all_points[j])
+                dist_matrix[i, j] = d
+                dist_matrix[j, i] = d
+
+    # Form connections
+    rng = np.random.default_rng()
+    available = set(all_points)
+    connections = []
+    order = rng.permutation(all_points)  # random iteration order
+
+    for p in order:
+        if p not in available:
+            continue
+
+        i = point_to_idx[p]
+        dists = dist_matrix[i]
+
+        # Mask out unavailable points
+        valid_idxs = [point_to_idx[q] for q in available if q != p]
+        if not valid_idxs:
+            continue
+
+        dists_masked = dists[valid_idxs]
+        if np.all(np.isinf(dists_masked)):
+            continue
+
+        nearest_idx = valid_idxs[np.argmin(dists_masked)]
+        q = all_points[nearest_idx]
+
+        # Connect and remove both
+        connections.append((p, q))
+        available.discard(p)
+        available.discard(q)
+
+    # Verify all branch cuts are made.
+    unmatched_neg = [p for p in neg_ids if p in available]
+    unmatched_pos = [p for p in pos_ids if p in available]
+
+    if unmatched_neg or unmatched_pos:
+        raise RuntimeError(
+            f"Method will not work as not all residues can be in a branch cut."
+        )
+
+    return connections
+
 
 class BranchCut:
 
@@ -58,7 +151,7 @@ class BranchCut:
 
     @property
     def length(self):
-        return np.sqrt(np.sum((self._start-self._end)**2))
+        return dist(self._start, self._end)
 
     def _line_high(self):
         dx = self._end[0] - self._start[0]
