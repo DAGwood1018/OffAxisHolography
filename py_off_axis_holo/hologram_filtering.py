@@ -55,10 +55,11 @@ def off_axis_masks(Fh, f10=None, mask_radius=None, scale_input=False):
         assert mask_radius < r, "Radius of mask can not exceed distance from image center."
         r_1 = mask_radius
 
+    r_1 = np.round(r_1)
     mask10 = np.sqrt((Fx - f10[1]) ** 2 + (Fy - f10[0]) ** 2) <= r_1
     mask01 = np.sqrt((Fx - f01[1]) ** 2 + (Fy - f01[0]) ** 2) <= r_1
     mask00 = np.sqrt((Fx - cx) ** 2 + (Fy - cy) ** 2) <= r_1
-    return mask10, mask00, mask01
+    return r_1, (mask10, mask00, mask01)
 
 
 class OffAxisFilter(DFT):
@@ -73,26 +74,43 @@ class OffAxisFilter(DFT):
         self._k0 = 2 * np.pi / wl
         self._sz = sz
         self._masks = None
-        self._ref = None
-        self._filter_radius = 0
+        self._ref_wave = None
+        self._filter_radius = None
+        self._filter_center = None
         self._window = np.ones(self._dims)
 
-    def __call__(self, fringes):
+    def __call__(self, fringes, bckgrnd=None, only_crop_to_mask=False, self_RCH=False, RCH_r_factor=0.1):
         if not self.masked:
             self.calibrate(fringes)
 
-        if self._ref is None:
+        if only_crop_to_mask is None:
             Fh = self.forwards(fringes)
+            if self_RCH:
+                RCH = Fh.copy()
+                _, RCH_masks = off_axis_masks(RCH, f10=self._filter_center,
+                                              mask_radius=np.round(0.1*self._filter_radius))
+                RCH *= RCH_masks[0]
+                RCH = crop_to_mask(RCH, self._masks[0])
             Fh *= self._masks[0]
             Fh = crop_to_mask(Fh, self._masks[0])
         else:
-            Fh = self.forwards(fringes * self._ref)
+            Fh = self.forwards(fringes * self._ref_wave)
+            if self_RCH:
+                RCH = Fh.copy()
+                _, RCH_masks = off_axis_masks(RCH, f10=self._filter_center,
+                                              mask_radius=np.round(0.1*self._filter_radius))
+                RCH *= RCH_masks[1]
+                RCH = crop_to_mask(RCH, self._masks[1])
             Fh *= self._masks[1]
             Fh = crop_to_mask(Fh, self._masks[1])
 
         if tuple(self.output_shape) != tuple(Fh.shape):
             self._ifft.refactor(Fh.shape)
-        return self.backwards(Fh)
+        field = self.backwards(Fh)
+        if self_RCH:
+            RCH_field = self.backwards(RCH)
+            field /= RCH_field
+        return field if bckgrnd is None else field / bckgrnd
 
     @property
     def masked(self):
@@ -187,18 +205,15 @@ class OffAxisFilter(DFT):
         return b[y_min:y_max, x_min:x_max]
 
     def _visualize_roi(self, fringes):
-        if not self._ref is None:
-            fringes = fringes * self._ref
+        if not self._ref_wave is None:
+            fringes = fringes * self._ref_wave
         Fh = self.forwards(fringes)
         Fh = format_img(np.abs(Fh)**(1/4))
 
         cv2.namedWindow('M', cv2.WINDOW_NORMAL)
         cv2.imshow('visualize_roi', Fh)
         cv2.waitKey(1500)
-        if self._ref is None:
-            Fh *= self._masks[0].astype('uint8')
-        else:
-            Fh *= self._masks[1].astype('uint8')
+        Fh *= self._masks[1].astype('uint8')
         cv2.imshow('visualize_roi', Fh)
         cv2.waitKey(4000)
         if cv2.getWindowProperty('visualize_roi', cv2.WND_PROP_VISIBLE) >= 1:
@@ -228,12 +243,20 @@ class OffAxisFilter(DFT):
         X, Y = gridspace(N, M, 0, True)
         return ref_phase_shift((X, Y), tilt, self._k0, self._sz)
 
-    def calibrate(self, fringes, mask_radius=None, optimize=True, use_ref=True, visualize=False, **kwargs):
+    def calibrate(self, fringes, mask_radius=None, optimize=True, visualize=False, **kwargs):
+        """
+        :param fringes: Hologram (typically of background) to calibrate phase filtering to.
+        :param mask_radius: Override the automatic radius of the mask if not None.
+        :param optimize: Optimize the mask center according to some cost function.
+        :param visualize: Show image of mask.
+        :param kwargs: Optional arguments to optimization routine.
+        :return:
+        """
 
         self.reset()
         Fh = self.forwards(fringes)
         _, f10 = select_mask_roi(Fh, True)
-        self._masks = off_axis_masks(Fh, f10=f10, mask_radius=mask_radius)
+        self._filter_radius, self._masks = off_axis_masks(Fh, f10=f10, mask_radius=mask_radius)
         freq = [f10[1] - Fh.shape[1] / 2, f10[0] - Fh.shape[0] / 2]
 
         if optimize:
@@ -244,15 +267,15 @@ class OffAxisFilter(DFT):
             except RuntimeError:
                 warn("Could not align to tilt.")
 
-        if use_ref:
-            self._ref = self.construct_reference(freq, self._dims[0], self._dims[1])
+        self._filter_center = [freq[1] + Fh.shape[1] / 2, freq[0] + Fh.shape[0] / 2]
+        self._ref_wave = self.construct_reference(freq, self._dims[0], self._dims[1])
         if visualize:
             self._visualize_roi(fringes)
         return True
 
     def reset(self):
         self._masks = None
-        self._ref = None
+        self._ref_wave = None
         self._window = np.ones(self._dims)
         self._ifft.refactor(self.input_shape)
         return self
