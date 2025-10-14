@@ -1,15 +1,15 @@
 Metadata-Version: 2.4
 Name: OffAxisHolography
-Version: 2.1.0
+Version: 2.2.0
 Summary: Code for Performing Off-axis Holography.
 Author: Davis Garwood
 License-File: LICENSE
 Requires-Dist: numpy
 Requires-Dist: scipy
+Requires-Dist: numba
 Requires-Dist: pyfftw
-Requires-Dist: matplotlib
 Requires-Dist: scikit-image
-Requires-Dist: opencv-python
+Requires-Dist: opencv
 Dynamic: author
 Dynamic: license-file
 Dynamic: requires-dist

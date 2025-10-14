@@ -1,6 +1,6 @@
 numpy
 scipy
+numba
 pyfftw
-matplotlib
 scikit-image
-opencv-python
+opencv
