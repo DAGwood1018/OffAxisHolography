@@ -1,6 +1,7 @@
 setuptools~=68.2.2
-numpy~=1.24.4
+numpy>=1.24.4
 opencv-python~=4.8.0.76
-scipy==1.11.2
-pyfftw~=0.13.1
-matplotlib~=3.7.3
+scipy>=1.11.2
+pyfftw>=0.13.1
+numba
+scikit-image

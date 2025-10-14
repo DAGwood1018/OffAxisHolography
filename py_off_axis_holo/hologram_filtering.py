@@ -5,7 +5,7 @@ import cv2
 from scipy.optimize import minimize
 from skimage.feature import peak_local_max
 from py_off_axis_holo.discrete_transforms import DFT
-from py_off_axis_holo.holography_helpers import ref_phase_shift, gridspace, format_img, crop_to_mask
+from py_off_axis_holo.holography_helpers import ref_phase_shift, gridspace, format_img, crop_to_mask, discrete_residue
 from warnings import warn
 
 logging.basicConfig(level=logging.INFO,
@@ -151,8 +151,8 @@ class OffAxisFilter(DFT):
         fy = M * self._sz * k[1] / (2 * np.pi)
         return np.array([fx, fy])
 
-    def _min_k(self, f, phi, X, Y):
-        tilt = self._calc_tilt(f)
+    def _min_k(self, freq, phi, X, Y):
+        tilt = self._calc_tilt(freq)
         R = ref_phase_shift((X, Y), tilt, self._k0, self._sz)
 
         f = R * np.exp(1j * phi)
@@ -165,8 +165,8 @@ class OffAxisFilter(DFT):
         y = yvec.sum()
         return np.absolute(x) ** 2 + np.absolute(y) ** 2
 
-    def _min_ksqr(self, f, phi, X, Y):
-        tilt = self._calc_tilt(f)
+    def _min_ksqr(self, freq, phi, X, Y):
+        tilt = self._calc_tilt(freq)
         R = ref_phase_shift((X, Y), tilt, self._k0, self._sz)
 
         f = R * np.exp(1j * phi)
@@ -175,7 +175,17 @@ class OffAxisFilter(DFT):
         mag = np.absolute(xvec) ** 2 + np.absolute(yvec) ** 2
         return mag.sum()
 
-    def _optimize_tilt(self, f, phase, method='TNC', tol=1e-6, step=None, opts=None):
+    def _min_residue(self, freq, phi, X, Y):
+        tilt = self._calc_tilt(freq)
+        R = ref_phase_shift((X, Y), tilt, self._k0, self._sz)
+
+        phase = np.angle(R) + phi
+        residues = discrete_residue(phase)
+        n_pos_poles = len(np.where(residues == 1))
+        n_neg_poles = len(np.where(residues == -1))
+        return (n_pos_poles - n_neg_poles) ** 2
+
+    def _optimize_tilt(self, freq, phase, method='TNC', cost='kqr', tol=1e-8, step=None, opts=None):
         logging.info("Aligning Mask to Inferred Tilt...")
         M, N = self._dims
         X, Y = gridspace(N, M, 0, True)
@@ -188,10 +198,19 @@ class OffAxisFilter(DFT):
         if opts is None:
             opts = {}
         if type(step) is int:
-            bounds = [(f[0] - step, f[0] + step), (f[1] - step, f[1] + step)]
+            bounds = [(freq[0] - step, freq[0] + step), (freq[1] - step, freq[1] + step)]
         else:
             bounds = None
-        res = minimize(self._min_ksqr, f, args=(phase, X, Y),
+        if cost == 'kqr':
+            cost_func = self._min_kqr
+        elif cost == 'k':
+            cost_func = self._min_k
+        elif cost == 'total_res':
+            cost_func = self._min_residue
+        else:
+            warn('Invalid cost function method given.')
+            cost_func = self._min_kqr
+        res = minimize(cost_func, freq, args=(phase, X, Y),
                        method=method, bounds=bounds, tol=tol, options=opts)
         logging.info("Optimization Routine Complete.")
         return np.array(res.x)
@@ -211,7 +230,7 @@ class OffAxisFilter(DFT):
         Fh = self.forwards(fringes)
         Fh = format_img(np.abs(Fh)**(1/4))
 
-        cv2.namedWindow('M', cv2.WINDOW_NORMAL)
+        cv2.namedWindow('visualize_roi', cv2.WINDOW_NORMAL)
         cv2.imshow('visualize_roi', Fh)
         cv2.waitKey(1500)
         Fh *= self._masks[1].astype('uint8')

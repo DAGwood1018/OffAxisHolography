@@ -106,6 +106,15 @@ def find_branch_cut(A):
         available.discard(p)
         available.discard(q)
 
+    # Verify all branch cuts are made.
+    unmatched_neg = [p for p in neg_ids if p in available]
+    unmatched_pos = [p for p in pos_ids if p in available]
+
+    if unmatched_neg or unmatched_pos:
+        raise RuntimeError(
+            f"Method will not work as not all residues can be in a branch cut."
+        )
+
     return connections
 
 
