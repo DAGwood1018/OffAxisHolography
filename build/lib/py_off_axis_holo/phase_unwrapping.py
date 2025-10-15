@@ -1,197 +1,186 @@
 import numpy as np
+from numba import njit
 from py_off_axis_holo.discrete_transforms import DFT
+from py_off_axis_holo.holography_helpers import wrap_to_pi
 
-
-def wrap_to_pi(phi):
-    phi = phi - 2 * np.pi * np.floor((phi + np.pi) / (2 * np.pi))
-    return phi
-
-def dist(a, b):
-    a, b = np.array(a), np.array(b)
+@njit("float64(int32, int32, int32, int32)")
+def dist(x1, y1, x2, y2):
+    a, b = np.array([x1, y1], dtype='float64'), np.array([x2, y2], dtype='float64')
     return np.linalg.norm(a - b)
 
-def discrete_residue(F):
-    """
-    Vectorized computation of:
-    np.round(((F[i, j+1]-F[i,j]) + (F[i+1,j+1]-F[i,j+1]) +
-              (F[i+1,j]-F[i+1,j+1]) + (F[i,j]-F[i+1,j])) / (2*np.pi))
-    """
-    F = np.asarray(F)
+@njit("float64(int32[:, :, :])")
+def branch_cut_cost(branch_cuts):
+    cost = 0
+    for cut in branch_cuts:
+        x1, y1, x2, y2 = cut[0, 0], cut[0, 1], cut[1, 0], cut[1, 1]
+        cost += dist(x1, y1, x2, y2)
+    return cost
 
-    # compute the terms for interior points
-    term1 = wrap_to_pi(F[:-1, 1:] - F[:-1, :-1])
-    term2 = wrap_to_pi(F[1:, 1:] - F[:-1, 1:])
-    term3 = wrap_to_pi(F[1:, :-1] - F[1:, 1:])
-    term4 = wrap_to_pi(F[:-1, :-1] - F[1:, :-1])
-
-    val = (term1 + term2 + term3 + term4) / (2 * np.pi)
-    res = np.zeros_like(F, dtype=float)
-    res[:-1, :-1] = np.round(val)
-    return res
-
-def find_branch_cut(A):
-    # Get coords of residues
-    neg_coords = np.argwhere(A == -1)
-    pos_coords = np.argwhere(A == 1)
-
-    # If no residues stop
-    if len(neg_coords) == 0 and len(pos_coords) == 0:
-        return []
-
-    # Find border coords
-    border_mask = np.zeros_like(A, dtype=bool)
-    border_mask[0, :] = border_mask[-1, :] = border_mask[:, 0] = border_mask[:, -1] = True
-    border_coords = np.argwhere(border_mask)
-
-    # Label all points based on type
-    neg_ids = [tuple(p) for p in neg_coords]
-    pos_ids = [tuple(p) for p in pos_coords]
-    border_ids = [tuple(p) for p in border_coords]
-    all_points = neg_ids + pos_ids + border_ids
-
-    types = (
-        ['-'] * len(neg_ids)
-        + ['+'] * len(pos_ids)
-        + ['B'] * len(border_ids)
-    )
-
-    # Create distance matrix
-    n = len(all_points)
-    dist_matrix = np.full((n, n), np.inf)
-
-    # Precompute mapping index
-    point_to_idx = {p: i for i, p in enumerate(all_points)}
-
-    # Fill distance matrix for valid pairs only
-    for i in range(n):
-        for j in range(i + 1, n):
-            t1, t2 = types[i], types[j]
-            valid = (
-                (t1 == 'neg' and t2 in {'pos', 'border'})
-                or (t1 == 'pos' and t2 in {'neg', 'border'})
-                or (t1 == 'border' and t2 in {'neg', 'pos'})
-            )
-            if valid:
-                d = dist(all_points[i], all_points[j])
-                dist_matrix[i, j] = d
-                dist_matrix[j, i] = d
-
-    # Form connections
-    rng = np.random.default_rng()
-    available = set(all_points)
-    connections = []
-    order = rng.permutation(all_points)  # random iteration order
-
-    for p in order:
-        if p not in available:
-            continue
-
-        i = point_to_idx[p]
-        dists = dist_matrix[i]
-
-        # Mask out unavailable points
-        valid_idxs = [point_to_idx[q] for q in available if q != p]
-        if not valid_idxs:
-            continue
-
-        dists_masked = dists[valid_idxs]
-        if np.all(np.isinf(dists_masked)):
-            continue
-
-        nearest_idx = valid_idxs[np.argmin(dists_masked)]
-        q = all_points[nearest_idx]
-
-        # Connect and remove both
-        connections.append((p, q))
-        available.discard(p)
-        available.discard(q)
-
-    # Verify all branch cuts are made.
-    unmatched_neg = [p for p in neg_ids if p in available]
-    unmatched_pos = [p for p in pos_ids if p in available]
-
-    if unmatched_neg or unmatched_pos:
-        raise RuntimeError(
-            f"Method will not work as not all residues can be in a branch cut."
-        )
-
-    return connections
-
-
-class BranchCut:
-
-    def __init__(self, x1, y1, x2, y2):
-        assert x1 is int, "x1 must be an integer."
-        assert y1 is int, "y1 must be an integer."
-        assert x2 is int, "x2 must be an integer."
-        assert y2 is int, "y2 must be an integer."
-
-        start = np.array([x1, y1])
-        end = np.array([x2, y2])
-        abs_diff = np.abs(end - start)
-        if abs_diff[1] < abs_diff[0]:
-            if start[0] > end[0]:
-                self._start = end
-                self._end = start
-            else:
-                self._start = start
-                self._end = end
-            self._points = self._line_low()
-        else:
-            if start[1] > end[1]:
-                self._start = end
-                self._end = start
-            else:
-                self._start = start
-                self._end = end
-            self._points = self._line_high()
-
-    def __call__(self):
-        return self._points
-
-    @property
-    def length(self):
-        return dist(self._start, self._end)
-
-    def _line_high(self):
-        dx = self._end[0] - self._start[0]
-        dy = self._end[1] - self._start[1]
-        xi = 1
-        if dx < 0:
-            xi = -1
-            dx *= -1
-        x = self._start[0]
-        D = 2*dx-dy
-
-        points = []
-        for y in range(self._start[1], self._end[1]):
-            points.append(np.array([x, y]))
-            if D > 0:
-                x += xi
-                D += 2*(dx-dy)
-            else:
-                D += 2*dx
-        return points
-
-    def _line_low(self):
-        dx = self._end[0] - self._start[0]
-        dy = self._end[1] - self._start[1]
+def bresenham_line(x1, y1, x2, y2):
+    def line_low(p1, p2):
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
         yi = 1
         if dy < 0:
             yi = -1
             dy *= -1
-        y = self._start[1]
-        D = 2*dy-dx
+        y = p1[1]
+        D = 2 * dy - dx
 
         points = []
-        for x in range(self._start[0], self._end[0]):
+        for x in range(p1[0], p2[0]):
             points.append(np.array([x, y]))
             if D > 0:
                 y += yi
-                D += -2*(dx-dy)
+                D += -2 * (dx - dy)
             else:
-                D += 2*dy
-        return points
+                D += 2 * dy
+        return np.array(points, dtype='int32')
+
+    def line_high(p1, p2):
+        assert len(p1) == 2, "p1 is not a 2d coordinate."
+        assert len(p2) == 2, "p2 is not a 2d coordinate."
+
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        xi = 1
+        if dx < 0:
+            xi = -1
+            dx *= -1
+        x = p1[0]
+        D = 2 * dx - dy
+
+        points = []
+        for y in range(p1[1], p2[1]):
+            points.append(np.array([x, y]))
+            if D > 0:
+                x += xi
+                D += 2 * (dx - dy)
+            else:
+                D += 2 * dx
+        return np.array(points, dtype='int32')
+
+    A = np.array([x1, y1], dtype='int32')
+    B = np.array([x2, y2], dtype='int32')
+    abs_diff = np.abs(B - A)
+    if abs_diff[1] < abs_diff[0]:
+        if A[0] > B[0]:
+            start, end = B, A
+        else:
+            start, end = A, B
+        line_points = line_low(start, end)
+    else:
+        if A[1] > B[1]:
+            start, end = B, A
+        else:
+            start, end = A, B
+        line_points = line_high(start, end)
+    return line_points
+
+def branch_cut_dists(branch_points, point_to_idx):
+    n = len(point_to_idx.keys())
+    dist_matrix = np.full((n, n), np.inf)
+
+    # Fill distance matrix valid pairs
+    for p1 in branch_points['-']:
+        for p2 in branch_points['+']:
+            i, j = point_to_idx[tuple(p1)], point_to_idx[tuple(p2)]
+            d = dist(p1[0], p1[1], p2[0], p2[1])
+            dist_matrix[i, j] = d
+            dist_matrix[j, i] = d
+    for p1 in branch_points['-']:
+        for p2 in branch_points['b']:
+            i, j = point_to_idx[tuple(p1)], point_to_idx[tuple(p2)]
+            d = dist(p1[0], p1[1], p2[0], p2[1])
+            dist_matrix[i, j] = d
+            dist_matrix[j, i] = d
+    for p1 in branch_points['+']:
+        for p2 in branch_points['b']:
+            i, j = point_to_idx[tuple(p1)], point_to_idx[tuple(p2)]
+            d = dist(p1[0], p1[1], p2[0], p2[1])
+            dist_matrix[i, j] = d
+            dist_matrix[j, i] = d
+    return dist_matrix
+
+def identify_branch_points(pole_matrix):
+    # Get coords of residues
+    neg_coords = np.argwhere(pole_matrix == -1)
+    pos_coords = np.argwhere(pole_matrix == 1)
+    border_coords = np.argwhere(pole_matrix == np.nan)
+
+    # If no residues stop
+    if len(neg_coords) == 0 and len(pos_coords) == 0:
+        return {}
+
+    # Label all points based on type
+    branch_points = {'-': {tuple(coord) for coord in neg_coords}, '+': {tuple(coord) for coord in pos_coords},
+                     'b': {tuple(coord) for coord in border_coords}}
+    return branch_points
+
+def make_branch_cuts(pole_matrix):
+    branch_points = identify_branch_points(pole_matrix)
+    if len(branch_points['-']) == 0 and len(branch_points['+']) == 0:
+        raise RuntimeError("There is no need to make branch cuts")
+
+    # Point-to-index maps
+    point_to_idx, idx_to_point = {}, {}
+    for i, neg_pole in enumerate(branch_points['-']):
+        point_to_idx[tuple(neg_pole)] = i
+        idx_to_point[i] = tuple(neg_pole)
+    n = len(point_to_idx.keys())
+    for i, pos_pole in enumerate(branch_points['+']):
+        point_to_idx[tuple(pos_pole)] = i + n
+        idx_to_point[i+n] = tuple(pos_pole)
+    n = len(point_to_idx.keys())
+    for i, border_point in enumerate(branch_points['b']):
+        point_to_idx[tuple(border_point)] = i + n
+        idx_to_point[i+n] = tuple(border_point)
+    dist_matrix = branch_cut_dists(branch_points, point_to_idx)
+
+    # Border points will always remain available b/c the assumption is that there is some matching pole outside the
+    # boundary not that the border point is the pole.
+    available_poles = branch_points['-'].union(branch_points['+'])
+    availability_mask = np.full((n, n), 0, dtype='float64')
+
+    # Iterate through poles at random.
+    rng = np.random.default_rng()
+    poles = rng.permutation(list(available_poles))  # random iteration order
+
+    # Find heuristic solution by making branch cuts with a greedy nearest neighbor search.
+    branch_cuts = []
+    for p1 in poles:
+        p1 = tuple(p1)
+        if p1 in available_poles:
+            i = point_to_idx[p1]
+            masked_dist_matrix = dist_matrix + availability_mask
+            dists = masked_dist_matrix[i, :]
+
+            j = np.argmin(dists)
+            p2 = tuple(idx_to_point[j])
+            branch_cuts.append((p1, p2))
+
+            # Remove used points from availability
+            available_poles.discard(p1)
+            availability_mask[i, :], availability_mask[:, i] = np.inf, np.inf
+            if p2 in branch_points['b']:
+                continue
+            available_poles.discard(p2)
+            availability_mask[j, :], availability_mask[:, j] = np.inf, np.inf
+
+    return np.array(branch_cuts, dtype='int32'), branch_points
+
+#temp function
+def visualize_branch_cuts(pole_matrix):
+    branch_cuts, branch_points = make_branch_cuts(pole_matrix)
+    branch_cut_matrix = np.zeros(pole_matrix.shape)
+    for cut in branch_cuts:
+        x1, y1, x2, y2 = cut[0, 0], cut[0, 1], cut[1, 0], cut[1, 1]
+        points = bresenham_line(x1, y1, x2, y2)
+        for point in points:
+            branch_cut_matrix[point[0], point[1]] = 1
+    return branch_cut_matrix
+
+#======================================================================================================================#
 
 class PhaseUnwrapTIE(DFT):
     """

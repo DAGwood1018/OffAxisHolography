@@ -3,4 +3,4 @@ scipy
 numba
 pyfftw
 scikit-image
-opencv
+opencv-python

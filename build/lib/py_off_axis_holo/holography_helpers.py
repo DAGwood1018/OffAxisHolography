@@ -33,6 +33,10 @@ def phase_diff(dz, wl, n, n0=0):
 def path_diff(phase, wl, n, n0=0):
     return phase * wl / (2 * np.pi * (n-n0))
 
+def wrap_to_pi(phi):
+    phi = phi - 2 * np.pi * np.floor((phi + np.pi) / (2 * np.pi))
+    return phi
+
 def tukey_window(dims, alpha=0.5):
     if dims is int or len(dims) == 1:
         return signal.windows.tukey(dims, alpha=alpha)
@@ -144,4 +148,28 @@ def pad_to_square(image):
         constant_values=0
     )
     return padded_image
+
+def discrete_residue(F):
+    """
+    Vectorized computation of:
+    np.round(((F[i, j+1]-F[i,j]) + (F[i+1,j+1]-F[i,j+1]) +
+              (F[i+1,j]-F[i+1,j+1]) + (F[i,j]-F[i+1,j])) / (2*np.pi))
+    """
+    F = np.asarray(F)
+
+    # compute the terms for interior points
+    term1 = wrap_to_pi(F[:-1, 1:] - F[:-1, :-1])
+    term2 = wrap_to_pi(F[1:, 1:] - F[:-1, 1:])
+    term3 = wrap_to_pi(F[1:, :-1] - F[1:, 1:])
+    term4 = wrap_to_pi(F[:-1, :-1] - F[1:, :-1])
+
+    val = (term1 + term2 + term3 + term4) / (2 * np.pi)
+    res = np.zeros_like(F, dtype=float)
+    res[:-1, :-1] = np.round(val)
+
+    # Treat all border pixels as ill-defined in terms of having a residue.
+    res[0, :], res[:, 0], res[-1, :], res[:, -1] = np.nan, np.nan, np.nan, np.nan
+    return res
+
+
 

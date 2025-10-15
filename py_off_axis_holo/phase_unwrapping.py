@@ -5,13 +5,77 @@ from py_off_axis_holo.holography_helpers import wrap_to_pi
 
 @njit("float64(int32, int32, int32, int32)")
 def dist(x1, y1, x2, y2):
-    assert x1 is int, "x1 must be an integer."
-    assert y1 is int, "y1 must be an integer."
-    assert x2 is int, "x2 must be an integer."
-    assert y2 is int, "y2 must be an integer."
-
-    a, b = np.array([x1, y1]), np.array([x2, y2])
+    a, b = np.array([x1, y1], dtype='float64'), np.array([x2, y2], dtype='float64')
     return np.linalg.norm(a - b)
+
+@njit("float64(int32[:, :, :])")
+def branch_cut_cost(branch_cuts):
+    cost = 0
+    for cut in branch_cuts:
+        x1, y1, x2, y2 = cut[0, 0], cut[0, 1], cut[1, 0], cut[1, 1]
+        cost += dist(x1, y1, x2, y2)
+    return cost
+
+def bresenham_line(x1, y1, x2, y2):
+    def line_low(p1, p2):
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        yi = 1
+        if dy < 0:
+            yi = -1
+            dy *= -1
+        y = p1[1]
+        D = 2 * dy - dx
+
+        points = []
+        for x in range(p1[0], p2[0]):
+            points.append(np.array([x, y]))
+            if D > 0:
+                y += yi
+                D += -2 * (dx - dy)
+            else:
+                D += 2 * dy
+        return np.array(points, dtype='int32')
+
+    def line_high(p1, p2):
+        assert len(p1) == 2, "p1 is not a 2d coordinate."
+        assert len(p2) == 2, "p2 is not a 2d coordinate."
+
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        xi = 1
+        if dx < 0:
+            xi = -1
+            dx *= -1
+        x = p1[0]
+        D = 2 * dx - dy
+
+        points = []
+        for y in range(p1[1], p2[1]):
+            points.append(np.array([x, y]))
+            if D > 0:
+                x += xi
+                D += 2 * (dx - dy)
+            else:
+                D += 2 * dx
+        return np.array(points, dtype='int32')
+
+    A = np.array([x1, y1], dtype='int32')
+    B = np.array([x2, y2], dtype='int32')
+    abs_diff = np.abs(B - A)
+    if abs_diff[1] < abs_diff[0]:
+        if A[0] > B[0]:
+            start, end = B, A
+        else:
+            start, end = A, B
+        line_points = line_low(start, end)
+    else:
+        if A[1] > B[1]:
+            start, end = B, A
+        else:
+            start, end = A, B
+        line_points = line_high(start, end)
+    return line_points
 
 def branch_cut_dists(branch_points, point_to_idx):
     n = len(point_to_idx.keys())
@@ -38,69 +102,6 @@ def branch_cut_dists(branch_points, point_to_idx):
             dist_matrix[j, i] = d
     return dist_matrix
 
-def bresenham_line(x1, y1, x2, y2):
-    assert x1 is int, "x1 must be an integer."
-    assert y1 is int, "y1 must be an integer."
-    assert x2 is int, "x2 must be an integer."
-    assert y2 is int, "y2 must be an integer."
-
-    def line_high(p1, p2):
-        dx = p2[0] - p1[0]
-        dy = p2[1] - p1[1]
-        xi = 1
-        if dx < 0:
-            xi = -1
-            dx *= -1
-        x = p1[0]
-        D = 2*dx-dy
-
-        points = []
-        for y in range(p1[1], p2[1]):
-            points.append(np.array([x, y]))
-            if D > 0:
-                x += xi
-                D += 2*(dx-dy)
-            else:
-                D += 2*dx
-        return points
-
-    def line_low(p1, p2):
-        dx = p2[0] - p1[0]
-        dy = p2[1] - p1[1]
-        yi = 1
-        if dy < 0:
-            yi = -1
-            dy *= -1
-        y = p1[1]
-        D = 2*dy-dx
-
-        points = []
-        for x in range(p1[0], p2[0]):
-            points.append(np.array([x, y]))
-            if D > 0:
-                y += yi
-                D += -2*(dx-dy)
-            else:
-                D += 2*dy
-        return points
-
-    A = np.array([x1, y1])
-    B = np.array([x2, y2])
-    abs_diff = np.abs(B - A)
-    if abs_diff[1] < abs_diff[0]:
-        if A[0] > B[0]:
-            start, end = B, A
-        else:
-            start, end = A, B
-        line_points = line_low(start, end)
-    else:
-        if A[1] > B[1]:
-            start, end = B, A
-        else:
-            start, end = A, B
-        line_points = line_high(start, end)
-    return line_points
-
 def identify_branch_points(pole_matrix):
     # Get coords of residues
     neg_coords = np.argwhere(pole_matrix == -1)
@@ -117,7 +118,7 @@ def identify_branch_points(pole_matrix):
     return branch_points
 
 def make_branch_cuts(pole_matrix):
-    branch_points, poles = identify_branch_points(pole_matrix)
+    branch_points = identify_branch_points(pole_matrix)
     if len(branch_points['-']) == 0 and len(branch_points['+']) == 0:
         raise RuntimeError("There is no need to make branch cuts")
 
@@ -138,24 +139,25 @@ def make_branch_cuts(pole_matrix):
 
     # Border points will always remain available b/c the assumption is that there is some matching pole outside the
     # boundary not that the border point is the pole.
-    available_poles = branch_points['-'] + branch_points['+']
-    availability_mask = np.full((n, n), 0)
+    available_poles = branch_points['-'].union(branch_points['+'])
+    availability_mask = np.full((n, n), 0, dtype='float64')
 
     # Iterate through poles at random.
     rng = np.random.default_rng()
     poles = rng.permutation(list(available_poles))  # random iteration order
 
     # Find heuristic solution by making branch cuts with a greedy nearest neighbor search.
-    connections = set()
+    branch_cuts = []
     for p1 in poles:
+        p1 = tuple(p1)
         if p1 in available_poles:
             i = point_to_idx[p1]
             masked_dist_matrix = dist_matrix + availability_mask
             dists = masked_dist_matrix[i, :]
 
             j = np.argmin(dists)
-            p2 = idx_to_point[j]
-            connections.add((p1, p2))
+            p2 = tuple(idx_to_point[j])
+            branch_cuts.append((p1, p2))
 
             # Remove used points from availability
             available_poles.discard(p1)
@@ -165,7 +167,18 @@ def make_branch_cuts(pole_matrix):
             available_poles.discard(p2)
             availability_mask[j, :], availability_mask[:, j] = np.inf, np.inf
 
-    return connections, branch_points
+    return np.array(branch_cuts, dtype='int32'), branch_points
+
+#temp function
+def visualize_branch_cuts(pole_matrix):
+    branch_cuts, branch_points = make_branch_cuts(pole_matrix)
+    branch_cut_matrix = np.zeros(pole_matrix.shape)
+    for cut in branch_cuts:
+        x1, y1, x2, y2 = cut[0, 0], cut[0, 1], cut[1, 0], cut[1, 1]
+        points = bresenham_line(x1, y1, x2, y2)
+        for point in points:
+            branch_cut_matrix[point[0], point[1]] = 1
+    return branch_cut_matrix
 
 #======================================================================================================================#
 

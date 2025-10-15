@@ -202,14 +202,14 @@ class OffAxisFilter(DFT):
         else:
             bounds = None
         if cost == 'kqr':
-            cost_func = self._min_kqr
+            cost_func = self._min_ksqr
         elif cost == 'k':
             cost_func = self._min_k
         elif cost == 'total_res':
             cost_func = self._min_residue
         else:
             warn('Invalid cost function method given.')
-            cost_func = self._min_kqr
+            cost_func = self._min_ksqr
         res = minimize(cost_func, freq, args=(phase, X, Y),
                        method=method, bounds=bounds, tol=tol, options=opts)
         logging.info("Optimization Routine Complete.")
