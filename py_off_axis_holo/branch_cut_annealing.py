@@ -19,6 +19,7 @@ def dist(x1, y1, x2, y2):
     a, b = np.array([x1, y1], dtype='float64'), np.array([x2, y2], dtype='float64')
     return np.linalg.norm(a - b)
 
+
 @njit("float64(int32[:, :], int32[:, :])")
 def branch_cut_cost(branch_cuts, pole_coords):
     """
@@ -32,11 +33,21 @@ def branch_cut_cost(branch_cuts, pole_coords):
     """
 
     cost = 0
-    for cut in np.argwhere(branch_cuts == 1):
-        p1, p2 = cut[0], cut[1]
+    cuts = np.argwhere(branch_cuts == 1)
+    dists = np.zeros((len(cuts),), dtype='float64')
+    for i, cut in enumerate(cuts):
         x1, y1, x2, y2 = pole_coords[cut[0], 0], pole_coords[cut[0], 1], pole_coords[cut[1], 0], pole_coords[cut[1], 1]
-        cost += dist(x1, y1, x2, y2)
+        dists[i] = dist(x1, y1, x2, y2)
+        cost += dists[i]**2
+    for i, cut1 in enumerate(cuts):
+        for j, cut2 in enumerate(cuts[i:]):
+            x11, y11, x21, y21 = pole_coords[cut1[0], 0], pole_coords[cut1[0], 1], pole_coords[cut1[1], 0], pole_coords[cut1[1], 1]
+            x12, y12, x22, y22 = pole_coords[cut2[0], 0], pole_coords[cut2[0], 1], pole_coords[cut2[1], 0], pole_coords[cut2[1], 1]
+            vec1, vec2 = np.array([x21-x11, y21-y11], dtype='float64'), np.array([x22-x12, y22-y12], dtype='float64')
+            mu_ij = dists[i] + dists[i+j]
+            cost += mu_ij * (1 - np.abs(vec1.dot(vec2) / dists[i] / dists[i+j]))
     return cost
+
 
 @njit("float64[:,:](int32[:], int32[:], int32[:], int32[:,:])")
 def branch_cut_dists(neg_poles, pos_poles, virtual_poles, pole_coords):
@@ -51,7 +62,7 @@ def branch_cut_dists(neg_poles, pos_poles, virtual_poles, pole_coords):
     n = len(pole_coords)
     dist_matrix = np.full((n, n), np.inf, dtype='float64')
 
-    # Fill distance matrix valid pairs. The border is assumed on average to intesect a virtual pair midway.
+    # Fill distance matrix valid pairs. The border is assumed on average to intersect a virtual pair midway.
     for p1 in neg_poles:
         for p2 in pos_poles:
             xy1, xy2 = pole_coords[p1], pole_coords[p2]
@@ -62,23 +73,63 @@ def branch_cut_dists(neg_poles, pos_poles, virtual_poles, pole_coords):
         for p2 in virtual_poles:
             xy1, xy2 = pole_coords[p1], pole_coords[p2]
             d = dist(xy1[0], xy1[1], xy2[0], xy2[1])
-            dist_matrix[p1, p2] = 2*d
-            dist_matrix[p2, p1] = 2*d
+            dist_matrix[p1, p2] = 2 * d
+            dist_matrix[p2, p1] = 2 * d
     for p1 in pos_poles:
         for p2 in virtual_poles:
             xy1, xy2 = pole_coords[p1], pole_coords[p2]
             d = dist(xy1[0], xy1[1], xy2[0], xy2[1])
-            dist_matrix[p1, p2] = 2*d
-            dist_matrix[p2, p1] = 2*d
+            dist_matrix[p1, p2] = 2 * d
+            dist_matrix[p2, p1] = 2 * d
     return dist_matrix
+
 
 #@njit("int32[:, :](int32[:], int32[:], float64[:], float64[:, :])")
 def make_branch_cuts(neg_poles, pos_poles, pole_vals, dist_matrix):
-
     # Border points will always remain available b/c the assumption is that there is some matching pole outside the
     # boundary not that the border point is the pole.
-    all_poles = np.concatenate((neg_poles, pos_poles), dtype='int32')
+    all_poles = np.concatenate((neg_poles, pos_poles))
     branch_cuts = np.full(dist_matrix.shape, 0, dtype='int32')
+    pole_availability = np.full(all_poles.shape, True, dtype='bool')
+    availability_mask = np.full(dist_matrix.shape, 0, dtype='float64')
+
+    # Iterate through poles at random.
+    rng = np.random.default_rng()
+    poles = rng.permutation(all_poles)  # random iteration order
+
+    # Find heuristic solution by making branch cuts with a greedy nearest neighbor search.
+    for p1 in poles:
+        if pole_availability[p1]:
+            masked_dist_matrix = dist_matrix + availability_mask
+            dists = masked_dist_matrix[p1, :]
+            p2 = np.argmin(dists)
+
+            branch_cuts[p1, p2] = 1
+            branch_cuts[p2, p1] = 1
+
+            if ((pole_vals[p1] == -1 and pole_vals[p2] == -1) or
+                    (pole_vals[p1] == 1 and pole_vals[p2] == 1) or (
+                            np.isnan(pole_vals[p1]) and np.isnan(pole_vals[p2]))):
+                raise ValueError(f"Improper branch cut detected ({pole_vals[p1]} <-> {pole_vals[p2]})")
+
+            # Remove used points from availability
+            pole_availability[p1] = False
+            availability_mask[p1, :], availability_mask[:, p1] = np.inf, np.inf
+            if np.isnan(pole_vals[p2]):
+                continue
+            pole_availability[p2] = False
+            availability_mask[p2, :], availability_mask[:, p2] = np.inf, np.inf
+    if len(np.argwhere(pole_availability == True)) > 0:
+        raise RuntimeError("Not enough branch cuts were made.")
+    return branch_cuts
+
+
+def rand_branch_cuts(neg_poles, pos_poles, virtual_poles):
+    # Border points will always remain available b/c the assumption is that there is some matching pole outside the
+    # boundary not that the border point is the pole.
+    all_poles = np.concatenate((neg_poles, pos_poles))
+    N = len(neg_poles) + len(pos_poles) + len(virtual_poles)
+    branch_cuts = np.full((N, N), 0, dtype='int32')
     pole_availability = np.full(all_poles.shape, True, dtype='bool')
     availability_mask = np.full(dist_matrix.shape, 0, dtype='float64')
 
@@ -126,7 +177,7 @@ def mix_branch_cuts(p00, p11, branch_cuts, pole_vals, virtual_pole_dists):
 
     # The branch cuts are (p00, p01) and (p10, p11)
     p00_val, p11_val = pole_vals[p00], pole_vals[p11]
-    if not (p00_val == -1 and p11_val==1):
+    if not (p00_val == -1 and p11_val == 1):
         return branch_cuts
 
     p01, p10 = np.argwhere(branch_cuts[p00, :] == 1), np.argwhere(branch_cuts[p11, :] == 1)
@@ -156,7 +207,7 @@ def mix_branch_cuts(p00, p11, branch_cuts, pole_vals, virtual_pole_dists):
     elif np.isnan(p01_val) and p10_val == -1:
         pick = random()
         if pick < 0.50:
-            # Find closest virtual pole of p10
+            # Find the closest virtual pole of p10
             p2 = np.argmin(virtual_pole_dists[p10, :])
 
             # Break current branch cuts
@@ -261,8 +312,8 @@ def init_temperature(N, neg_poles, pos_poles, branch_cuts, pole_coords, pole_val
     dE, test_dE = 0.0, 0.0
     E = branch_cut_cost(branch_cuts, pole_coords)
     for n in range(N):
-        i = int(np.floor(random()*neg_poles.shape[0]))
-        j = int(np.floor(random()*pos_poles.shape[0]))
+        i = int(np.floor(random() * neg_poles.shape[0]))
+        j = int(np.floor(random() * pos_poles.shape[0]))
         neg_pole = neg_poles[i]
         pos_pole = pos_poles[j]
         neighbor_state = mix_branch_cuts(neg_pole, pos_pole, branch_cuts.copy(), pole_vals, virtual_pole_dists)
@@ -271,8 +322,10 @@ def init_temperature(N, neg_poles, pos_poles, branch_cuts, pole_coords, pole_val
             dE = test_dE
     return dE
 
+
 @njit
-def heat_init_state(N, T_init, neg_poles, pos_poles, branch_cuts, pole_coords, pole_vals, virtual_pole_dists, heating_rate):
+def heat_init_state(N, T_init, neg_poles, pos_poles, branch_cuts, pole_coords, pole_vals, virtual_pole_dists,
+                    heating_rate):
     T = T_init
     E = branch_cut_cost(branch_cuts, pole_coords)
     temps, energies = np.empty((N,), dtype='float64'), np.empty((N,), dtype='float64')
@@ -286,7 +339,7 @@ def heat_init_state(N, T_init, neg_poles, pos_poles, branch_cuts, pole_coords, p
         if E_new - E > 0 or random() > np.exp(-(E_new - E) / T):
             E = E_new
             branch_cuts = neighbor_state
-            for i in range(len(neg_poles)+len(pos_poles)):
+            for i in range(len(neg_poles) + len(pos_poles)):
                 if np.size(np.argwhere(branch_cuts[i, :] == 1)) == 0:
                     print(f'lost branch cut for pole {i}')
         energies[n] = E
@@ -295,8 +348,10 @@ def heat_init_state(N, T_init, neg_poles, pos_poles, branch_cuts, pole_coords, p
 
     return branch_cuts, temps, energies
 
+
 @njit
-def anneal_branch_cuts(N, T_init, neg_poles, pos_poles, branch_cuts, pole_coords, pole_vals, virtual_pole_dists, cooling_rate):
+def anneal_branch_cuts(N, T_init, neg_poles, pos_poles, branch_cuts, pole_coords, pole_vals, virtual_pole_dists,
+                       cooling_rate):
     T = T_init
     E = branch_cut_cost(branch_cuts, pole_coords)
     temps, energies = np.empty((N,), dtype='float64'), np.empty((N,), dtype='float64')
@@ -351,6 +406,7 @@ def draw_branch_cut(x1, y1, x2, y2):
             y1 += sy
     return points
 
+
 def check_for_pole_repeats(branch_cuts, pole_vals):
     poles = set()
     for cut in np.argwhere(branch_cuts == 1):
@@ -366,5 +422,3 @@ def check_for_pole_repeats(branch_cuts, pole_vals):
             else:
                 poles.add(p2)
     return False
-
-

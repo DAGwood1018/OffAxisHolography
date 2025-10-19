@@ -1,4 +1,3 @@
-import h5py
 import numpy as np
 from py_off_axis_holo.hologram_filtering import OffAxisFilter
 from py_off_axis_holo.holography_helpers import discrete_residue
@@ -24,28 +23,22 @@ def plot_frame(plots):
     plt.show()
 
 
-filename = '../data/experiment2.h5'
+phase = np.load("unwrap_test.npy")
 
+branch_cut_matrix, T, E = visualize_branch_cuts(phase)
 
-with h5py.File(filename, 'r+') as in_file:
+plt.figure()
+plt.imshow(branch_cut_matrix, vmin=0, vmax=1)
+plt.show()
 
-    phase = np.load("unwrap_test.npy")
+plt.figure()
+plt.plot(T)
+plt.show()
 
-    '''
-    branch_cut_matrix, T, E = visualize_branch_cuts(phase)
+plt.figure()
+plt.plot(E)
+plt.show()
 
-    plt.figure()
-    plt.imshow(branch_cut_matrix, vmin=0, vmax=1)
-    plt.show()
-
-    plt.figure()
-    plt.plot(T)
-    plt.show()
-
-    plt.figure()
-    plt.plot(E)
-    plt.show()
-    '''
 
 
 

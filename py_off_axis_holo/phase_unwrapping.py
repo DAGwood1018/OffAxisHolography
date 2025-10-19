@@ -20,7 +20,7 @@ def visualize_branch_cuts(wrapped_phase):
 
 class BranchCutUnwrap:
 
-    def __init__(self, heating_cycles=100, cooling_cycles=10000, n_samples=1000, heating_rate=1.1, cooling_rate=0.8):
+    def __init__(self, heating_cycles=10000, cooling_cycles=10000, n_samples=1000, heating_rate=1.1, cooling_rate=0.8):
         """
         Initialize with annealing parameters
         """
