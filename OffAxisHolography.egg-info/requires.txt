@@ -1,6 +1,0 @@
-numpy
-scipy
-numba
-pyfftw
-scikit-image
-opencv-python
