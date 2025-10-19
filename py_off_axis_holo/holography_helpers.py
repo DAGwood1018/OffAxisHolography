@@ -155,6 +155,7 @@ def discrete_residue(F):
     np.round(((F[i, j+1]-F[i,j]) + (F[i+1,j+1]-F[i,j+1]) +
               (F[i+1,j]-F[i+1,j+1]) + (F[i,j]-F[i+1,j])) / (2*np.pi))
     """
+
     F = np.asarray(F)
 
     # compute the terms for interior points
@@ -163,13 +164,7 @@ def discrete_residue(F):
     term3 = wrap_to_pi(F[1:, :-1] - F[1:, 1:])
     term4 = wrap_to_pi(F[:-1, :-1] - F[1:, :-1])
 
-    val = (term1 + term2 + term3 + term4) / (2 * np.pi)
-    res = np.zeros_like(F, dtype=float)
-    res[:-1, :-1] = np.round(val)
-
-    # Treat all border pixels as ill-defined in terms of having a residue.
-    res[0, :], res[:, 0], res[-1, :], res[:, -1] = np.nan, np.nan, np.nan, np.nan
-    return res
+    return np.round((term1 + term2 + term3 + term4) / (2 * np.pi))
 
 
 

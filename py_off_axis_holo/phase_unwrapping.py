@@ -1,109 +1,105 @@
 import numpy as np
-from branch_cut_annealing import make_branch_cuts
+from py_off_axis_holo.branch_cut_annealing import (make_branch_cuts, branch_cut_dists, init_temperature,
+                                                   draw_branch_cut, heat_init_state, anneal_branch_cuts, check_for_pole_repeats)
 from py_off_axis_holo.discrete_transforms import DFT
 from py_off_axis_holo.holography_helpers import wrap_to_pi, discrete_residue
 
 #temp function
-def visualize_branch_cuts(pole_matrix):
-    branch_cuts, branch_points = make_branch_cuts(pole_matrix)
-    branch_cut_matrix = np.zeros(pole_matrix.shape)
-    for cut in branch_cuts:
-        x1, y1, x2, y2 = cut[0, 0], cut[0, 1], cut[1, 0], cut[1, 1]
-        points = bresenham_line(x1, y1, x2, y2)
-        for point in points:
+def visualize_branch_cuts(wrapped_phase):
+    branch_cut_unwrapper = BranchCutUnwrap()
+    branch_cuts, T, E = branch_cut_unwrapper(wrapped_phase)
+    branch_cut_matrix = np.zeros((wrapped_phase.shape[0]+1, wrapped_phase.shape[1]+1))
+    pole_coords = branch_cut_unwrapper._pole_coords
+    for cut in np.argwhere(branch_cuts == 1):
+        p1, p2 = cut[0], cut[1]
+        x1, y1, x2, y2 = pole_coords[cut[0], 0], pole_coords[cut[0], 1], pole_coords[cut[1], 0], pole_coords[cut[1], 1]
+        points = draw_branch_cut(x1, y1, x2, y2)
+        for point in list(points):
             branch_cut_matrix[point[0], point[1]] = 1
-    return branch_cut_matrix
+    return branch_cut_matrix, T, E
 
 class BranchCutUnwrap:
 
-    def __init__(self):
-        '''
+    def __init__(self, heating_cycles=100, cooling_cycles=10000, n_samples=1000, heating_rate=1.1, cooling_rate=0.8):
+        """
         Initialize with annealing parameters
-        '''
-        self._cooling_schedule = None
+        """
+
+        self._sample_size = n_samples
+        self._heating_cycles = heating_cycles
+        self._cooling_cycles = cooling_cycles
+        self._pos_poles = np.array([], dtype='int32')
+        self._neg_poles = np.array([], dtype='int32')
+        self._virtual_poles = np.array([], dtype='int32')
+        self._pole_coords = np.array([[]], dtype='int32')
+        self._pole_vals = np.array([], dtype='float64')
+        self._heating_rate = heating_rate
+        self._cooling_rate = cooling_rate
 
     def __call__(self, wrapped_phase):
-        residues = discrete_residue(wrapped_phase)
-        branch_cuts, branch_points = make_branch_cuts(residues)
+        residues = np.pad(discrete_residue(wrapped_phase), pad_width=1, mode='constant', constant_values=np.nan)
+        branch_points = self._identify_branch_points(residues)
+        if len(branch_points['-']) == 0 and len(branch_points['+']) == 0:
+            raise RuntimeError("There is no need to make branch cuts")
 
-        '''
-        Optimize branch cuts
-        '''
+        # Index to pole coord and val.
+        pole_coords, pole_vals = [], []
+        self._neg_poles = np.array(range(len(branch_points['-'])), dtype='int32')
+        for i, neg_pole in enumerate(branch_points['-']):
+            pole_coords.append(tuple(neg_pole))
+            pole_vals.append(-1)
+        self._pos_poles = np.array(range(len(branch_points['-'])), dtype='int32') + len(pole_vals)
+        for i, pos_pole in enumerate(branch_points['+']):
+            pole_coords.append(tuple(pos_pole))
+            pole_vals.append(1)
+        self._virtual_poles = np.array(range(len(branch_points['i'])), dtype='int32') + len(pole_vals)
+        for i, virtual_pole in enumerate(branch_points['i']):
+            pole_coords.append(tuple(virtual_pole))
+            pole_vals.append(np.nan)
+        self._pole_coords = np.array(pole_coords, dtype='int32')
+        self._pole_vals = np.array(pole_vals, dtype='float64')
+        dist_matrix = branch_cut_dists(self._neg_poles, self._pos_poles, self._virtual_poles, self._pole_coords)
+        branch_cuts = make_branch_cuts(self._neg_poles, self._pos_poles, self._pole_vals, dist_matrix)
 
+        branch_cuts, T, E = self._reverse_annealing(branch_cuts, dist_matrix)
         '''
         Find path to traverse and unwrap
         '''
 
-        unwrapped_phase = None
-        return unwrapped_phase
+        return branch_cuts, T, E
 
-    @classmethod
-    def line_high(cls, p1, p2):
-        assert len(p1) == 2, "p1 is not a 2d coordinate."
-        assert len(p2) == 2, "p2 is not a 2d coordinate."
+    def _identify_branch_points(self, pole_matrix):
+        # Get coords of residues
 
-        dx = p2[0] - p1[0]
-        dy = p2[1] - p1[1]
-        xi = 1
-        if dx < 0:
-            xi = -1
-            dx *= -1
-        x = p1[0]
-        D = 2 * dx - dy
+        neg_coords = np.argwhere(pole_matrix == -1)
+        pos_coords = np.argwhere(pole_matrix == 1)
+        virtual_poles = np.argwhere(np.isnan(pole_matrix))
 
-        points = []
-        for y in range(p1[1], p2[1]):
-            points.append(np.array([x, y]))
-            if D > 0:
-                x += xi
-                D += 2 * (dx - dy)
-            else:
-                D += 2 * dx
-        return np.array(points, dtype='int32')
+        # If no residues stop
+        if len(neg_coords) == 0 and len(pos_coords) == 0:
+            return {}
 
-    @classmethod
-    def line_low(cls, p1, p2):
-        dx = p2[0] - p1[0]
-        dy = p2[1] - p1[1]
-        yi = 1
-        if dy < 0:
-            yi = -1
-            dy *= -1
-        y = p1[1]
-        D = 2 * dy - dx
+        # Label all points based on type
+        branch_points = {'-': {tuple(coord) for coord in neg_coords}, '+': {tuple(coord) for coord in pos_coords},
+                         'i': {tuple(coord) for coord in virtual_poles}}
+        return branch_points
 
-        points = []
-        for x in range(p1[0], p2[0]):
-            points.append(np.array([x, y]))
-            if D > 0:
-                y += yi
-                D += -2 * (dx - dy)
-            else:
-                D += 2 * dy
-        return np.array(points, dtype='int32')
+    def _reverse_annealing(self, branch_cuts, dist_matrix):
+        mask = np.full(dist_matrix.shape, 0, dtype='float64')
+        mask[0:len(self._neg_poles) + len(self._pos_poles), 0:len(self._neg_poles) + len(self._pos_poles)] = np.inf
+        virtual_pole_dists = dist_matrix + mask
 
-    @classmethod
-    def pxls_on_branch_cut(cls, x1, y1, x2, y2):
-        """
-        This implements Bresenham's line algorithm.
-        """
+        T_init = init_temperature(self._sample_size, self._neg_poles, self._pos_poles, branch_cuts,
+                                  self._pole_coords, self._pole_vals, virtual_pole_dists)
 
-        A = np.array([x1, y1], dtype='int32')
-        B = np.array([x2, y2], dtype='int32')
-        abs_diff = np.abs(B - A)
-        if abs_diff[1] < abs_diff[0]:
-            if A[0] > B[0]:
-                start, end = B, A
-            else:
-                start, end = A, B
-            line_points = cls.line_low(start, end)
-        else:
-            if A[1] > B[1]:
-                start, end = B, A
-            else:
-                start, end = A, B
-            line_points = cls.line_high(start, end)
-        return line_points
+        branch_cuts, T1, E1 = heat_init_state(self._heating_cycles, T_init, self._neg_poles, self._pos_poles,
+                                                         branch_cuts, self._pole_coords, self._pole_vals, virtual_pole_dists, self._heating_rate)
+        #branch_cuts, T2, E2 = anneal_branch_cuts(self._cooling_cycles, T_init, self._neg_poles, self._pos_poles,
+        #                                                 branch_cuts, self._pole_coords, self._pole_vals, virtual_pole_dists, self._cooling_rate)
+
+        return branch_cuts, T1, E1 #np.concatenate((T1, T2)), np.concatenate((E1, E2))
+
+
 
 #======================================================================================================================#
 

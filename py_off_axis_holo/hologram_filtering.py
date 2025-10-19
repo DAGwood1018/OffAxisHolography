@@ -5,7 +5,7 @@ import cv2
 from scipy.optimize import minimize
 from skimage.feature import peak_local_max
 from py_off_axis_holo.discrete_transforms import DFT
-from py_off_axis_holo.holography_helpers import ref_phase_shift, gridspace, format_img, crop_to_mask, discrete_residue
+from py_off_axis_holo.holography_helpers import ref_phase_shift, gridspace, format_img, crop_to_mask
 from warnings import warn
 
 logging.basicConfig(level=logging.INFO,
@@ -175,16 +175,6 @@ class OffAxisFilter(DFT):
         mag = np.absolute(xvec) ** 2 + np.absolute(yvec) ** 2
         return mag.sum()
 
-    def _min_residue(self, freq, phi, X, Y):
-        tilt = self._calc_tilt(freq)
-        R = ref_phase_shift((X, Y), tilt, self._k0, self._sz)
-
-        phase = np.angle(R) + phi
-        residues = discrete_residue(phase)
-        n_pos_poles = len(np.where(residues == 1))
-        n_neg_poles = len(np.where(residues == -1))
-        return (n_pos_poles - n_neg_poles) ** 2
-
     def _optimize_tilt(self, freq, phase, method='TNC', cost='kqr', tol=1e-8, step=None, opts=None):
         logging.info("Aligning Mask to Inferred Tilt...")
         M, N = self._dims
@@ -205,8 +195,6 @@ class OffAxisFilter(DFT):
             cost_func = self._min_ksqr
         elif cost == 'k':
             cost_func = self._min_k
-        elif cost == 'total_res':
-            cost_func = self._min_residue
         else:
             warn('Invalid cost function method given.')
             cost_func = self._min_ksqr
