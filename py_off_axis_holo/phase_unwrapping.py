@@ -1,14 +1,22 @@
 import numpy as np
 from py_off_axis_holo.branch_cut_annealing import (make_branch_cuts, branch_cut_dists, init_temperature,
-                                                   draw_branch_cut, heat_init_state, anneal_branch_cuts, check_for_pole_repeats)
+                                                   draw_branch_cut, heat_init_state, anneal_branch_cuts,
+                                                   branch_cut_cost)
 from py_off_axis_holo.discrete_transforms import DFT
 from py_off_axis_holo.holography_helpers import wrap_to_pi, discrete_residue
+import logging
+import time
+
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    handlers=[logging.StreamHandler()])
+
 
 #temp function
 def visualize_branch_cuts(wrapped_phase):
-    branch_cut_unwrapper = BranchCutUnwrap()
+    branch_cut_unwrapper = BranchCutUnwrap(1.05, 0.99, max_heat_iter=10, max_cool_iter=10**5)
     branch_cuts, T, E = branch_cut_unwrapper(wrapped_phase)
-    branch_cut_matrix = np.zeros((wrapped_phase.shape[0]+1, wrapped_phase.shape[1]+1))
+    branch_cut_matrix = np.zeros((wrapped_phase.shape[0] + 1, wrapped_phase.shape[1] + 1))
     pole_coords = branch_cut_unwrapper._pole_coords
     for cut in np.argwhere(branch_cuts == 1):
         p1, p2 = cut[0], cut[1]
@@ -18,23 +26,25 @@ def visualize_branch_cuts(wrapped_phase):
             branch_cut_matrix[point[0], point[1]] = 1
     return branch_cut_matrix, T, E
 
+
 class BranchCutUnwrap:
 
-    def __init__(self, heating_cycles=10000, cooling_cycles=10000, n_samples=1000, heating_rate=1.1, cooling_rate=0.8):
+    def __init__(self, heat_rate, cool_rate, max_heat_iter=100, max_cool_iter=1000, tol=1e-3):
         """
         Initialize with annealing parameters
         """
 
-        self._sample_size = n_samples
-        self._heating_cycles = heating_cycles
-        self._cooling_cycles = cooling_cycles
+        self._max_heating_cycles = max_heat_iter
+        self._max_cooling_cycles = max_cool_iter
+        self._cooling_rate = cool_rate
+        self._heating_rate = heat_rate
+        self._tol = tol
+
         self._pos_poles = np.array([], dtype='int32')
         self._neg_poles = np.array([], dtype='int32')
         self._virtual_poles = np.array([], dtype='int32')
         self._pole_coords = np.array([[]], dtype='int32')
         self._pole_vals = np.array([], dtype='float64')
-        self._heating_rate = heating_rate
-        self._cooling_rate = cooling_rate
 
     def __call__(self, wrapped_phase):
         residues = np.pad(discrete_residue(wrapped_phase), pad_width=1, mode='constant', constant_values=np.nan)
@@ -89,16 +99,21 @@ class BranchCutUnwrap:
         mask[0:len(self._neg_poles) + len(self._pos_poles), 0:len(self._neg_poles) + len(self._pos_poles)] = np.inf
         virtual_pole_dists = dist_matrix + mask
 
-        T_init = init_temperature(self._sample_size, self._neg_poles, self._pos_poles, branch_cuts,
-                                  self._pole_coords, self._pole_vals, virtual_pole_dists)
+        t_start = time.time()
+        T_init = branch_cut_cost(branch_cuts, self._pole_coords)
+        logging.info("Estimated Starting Temperature...")
 
-        branch_cuts, T1, E1 = heat_init_state(self._heating_cycles, T_init, self._neg_poles, self._pos_poles,
-                                                         branch_cuts, self._pole_coords, self._pole_vals, virtual_pole_dists, self._heating_rate)
-        #branch_cuts, T2, E2 = anneal_branch_cuts(self._cooling_cycles, T_init, self._neg_poles, self._pos_poles,
-        #                                                 branch_cuts, self._pole_coords, self._pole_vals, virtual_pole_dists, self._cooling_rate)
+        branch_cuts, T1, E1 = heat_init_state(T_init, self._max_heating_cycles, self._neg_poles, self._pos_poles,
+                                              branch_cuts, self._pole_coords, self._pole_vals, virtual_pole_dists,
+                                              self._heating_rate)
+        logging.info("Finished Heating Initial State...")
 
-        return branch_cuts, T1, E1 #np.concatenate((T1, T2)), np.concatenate((E1, E2))
+        branch_cuts, T2, E2 = anneal_branch_cuts(T1[-1], self._max_cooling_cycles, self._neg_poles, self._pos_poles,
+                                                 branch_cuts, self._pole_coords, self._pole_vals, virtual_pole_dists,
+                                                 self._cooling_rate)
+        logging.info(f"Finished Annealing. It took {time.time() - t_start}s.")
 
+        return branch_cuts, np.concatenate((T1, T2)), np.concatenate((E1, E2))
 
 
 #======================================================================================================================#

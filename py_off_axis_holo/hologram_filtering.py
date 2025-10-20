@@ -10,8 +10,7 @@ from warnings import warn
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    handlers=[logging.FileHandler('hologram_filtering.log'),
-                              logging.StreamHandler()])
+                    handlers=[logging.StreamHandler()])
 
 def select_mask_roi(Fh, scale_input=False):
     if scale_input:

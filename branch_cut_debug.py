@@ -24,7 +24,7 @@ def plot_frame(plots):
 
 
 phase = np.load("unwrap_test.npy")
-
+print(phase.shape[0]*phase.shape[1])
 branch_cut_matrix, T, E = visualize_branch_cuts(phase)
 
 plt.figure()
