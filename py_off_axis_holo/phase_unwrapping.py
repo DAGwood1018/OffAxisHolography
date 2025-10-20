@@ -9,9 +9,9 @@ class PhaseUnwrapTIE(DFT):
     The author's Matlab implementation can be found here https://www.mathworks.com/matlabcentral/fileexchange/68493-robust-2d-phase-unwrapping-algorithm.
     """
 
-    def __init__(self, Nx, Ny, nb=1, threads=1, dtype='float64', zero=False, **kwargs):
+    def __init__(self, Nx, Ny, nb=1, threads=1, max_iter=100, dtype='float64', **kwargs):
         super().__init__((Nx, Ny), nb, threads=threads, ortho=True, re=True, dtype=dtype, **kwargs)
-        self._zero = zero
+        self._max_iter = max_iter
 
     def __call__(self, phase_wrap):
         phi1 = self.unwrap(phase_wrap)
@@ -27,7 +27,7 @@ class PhaseUnwrapTIE(DFT):
         residue = wrap_to_pi(phase_unwrap - phi1)
 
         i = 0
-        while np.sum(np.sum(np.abs(K2 - K1))) > 0:
+        while np.sum(np.sum(np.abs(K2 - K1))) > 0 and i < self._max_iter:
             K1 = K2
             phic = self.unwrap(residue)
             phi1 += phic
@@ -36,7 +36,7 @@ class PhaseUnwrapTIE(DFT):
             phase_unwrap = phase_wrap + 2 * K2 * np.pi
             residue = wrap_to_pi(phase_unwrap - phi1)
             i += 1
-        return phase_unwrap - phase_unwrap.min() if self._zero else phase_unwrap
+        return phase_unwrap
 
     def _solve(self, rho):
         # solve the Poisson equation using DCT
