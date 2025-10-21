@@ -12,9 +12,7 @@ logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                     handlers=[logging.StreamHandler()])
 
-def select_mask_roi(Fh, scale_input=False):
-    if scale_input:
-        Fh = np.abs(Fh)**(1/4)
+def select_mask_roi(Fh):
     Fh_img = format_img(Fh)
 
     cv2.namedWindow('Masking', cv2.WINDOW_NORMAL)
@@ -37,10 +35,10 @@ def select_mask_roi(Fh, scale_input=False):
     logging.info(f'Selected ROI centered at a tilt of ({f1[0]}, {f1[1]}).')
     return roi_mask, f1
 
-def off_axis_masks(Fh, f10=None, mask_radius=None, scale_input=False):
+def off_axis_masks(Fh, f10=None, mask_radius=None, sqr_masks=False):
     f10 = np.array(f10)
     if f10 is None:
-        _, f10 = select_mask_roi(Fh, scale_input)
+        _, f10 = select_mask_roi(Fh)
     else:
         assert len(f10) == 2, "Peak coordinates have the wrong dimensionality."
         assert f10[0] < Fh.shape[0] and f10[1] < Fh.shape[1], "Invalid peak position given."
@@ -56,15 +54,20 @@ def off_axis_masks(Fh, f10=None, mask_radius=None, scale_input=False):
         r_1 = mask_radius
 
     r_1 = np.round(r_1)
-    mask10 = np.sqrt((Fx - f10[1]) ** 2 + (Fy - f10[0]) ** 2) <= r_1
-    mask01 = np.sqrt((Fx - f01[1]) ** 2 + (Fy - f01[0]) ** 2) <= r_1
-    mask00 = np.sqrt((Fx - cx) ** 2 + (Fy - cy) ** 2) <= r_1
+    if sqr_masks:
+        mask10 = r_1 <= (Fx - f10[1]) <= r_1 <= (Fy - f10[0]) <= r_1
+        mask01 = r_1 <= (Fx - f01[1]) <= r_1 <= (Fy - f01[0]) <= r_1
+        mask00 = r_1 <= (Fx - cx) <= r_1 <= (Fy - cy) <= r_1
+    else:
+        mask10 = np.sqrt((Fx - f10[1]) ** 2 + (Fy - f10[0]) ** 2) <= r_1
+        mask01 = np.sqrt((Fx - f01[1]) ** 2 + (Fy - f01[0]) ** 2) <= r_1
+        mask00 = np.sqrt((Fx - cx) ** 2 + (Fy - cy) ** 2) <= r_1
     return r_1, (mask10, mask00, mask01)
 
 
 class OffAxisFilter(DFT):
 
-    def __init__(self, M, N, wl, sz, nb=0, threads=1, dtype='complex128', **kwargs):
+    def __init__(self, M, N, wl, sz, nb=0, threads=1, dtype='complex128', sqr_masks=False, **kwargs):
         """
         *Using un-normalized FFTs is fine since we are only concerned with the phase information.
         """
@@ -77,6 +80,7 @@ class OffAxisFilter(DFT):
         self._ref_wave = None
         self._filter_radius = None
         self._filter_center = None
+        self._sqr_masks = sqr_masks
         self._window = np.ones(self._dims)
 
     def __call__(self, fringes, bckgrnd=None, only_crop_to_mask=False, self_RCH=False, RCH_r_factor=0.1):
@@ -88,7 +92,7 @@ class OffAxisFilter(DFT):
             if self_RCH:
                 RCH = Fh.copy()
                 _, RCH_masks = off_axis_masks(RCH, f10=self._filter_center,
-                                              mask_radius=np.round(0.1*self._filter_radius))
+                                              mask_radius=np.round(0.1*self._filter_radius), sqr_masks=self._sqr_masks)
                 RCH *= RCH_masks[0]
                 RCH = crop_to_mask(RCH, self._masks[0])
             Fh *= self._masks[0]
@@ -98,7 +102,7 @@ class OffAxisFilter(DFT):
             if self_RCH:
                 RCH = Fh.copy()
                 _, RCH_masks = off_axis_masks(RCH, f10=self._filter_center,
-                                              mask_radius=np.round(0.1*self._filter_radius))
+                                              mask_radius=np.round(0.1*self._filter_radius), sqr_masks=self._sqr_masks)
                 RCH *= RCH_masks[1]
                 RCH = crop_to_mask(RCH, self._masks[1])
             Fh *= self._masks[1]
@@ -263,7 +267,7 @@ class OffAxisFilter(DFT):
         self.reset()
         Fh = self.forwards(fringes)
         _, f10 = select_mask_roi(Fh, True)
-        self._filter_radius, self._masks = off_axis_masks(Fh, f10=f10, mask_radius=mask_radius)
+        self._filter_radius, self._masks = off_axis_masks(Fh, f10=f10, mask_radius=mask_radius, sqr_masks=self._sqr_masks)
         freq = [f10[1] - Fh.shape[1] / 2, f10[0] - Fh.shape[0] / 2]
 
         if optimize:
