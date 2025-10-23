@@ -14,7 +14,6 @@ logging.basicConfig(level=logging.INFO,
 
 def select_mask_roi(Fh):
     Fh_img = format_img(Fh)
-
     cv2.namedWindow('Masking', cv2.WINDOW_NORMAL)
     cv2.setWindowTitle('Masking', 'Select Off-axis Order of Interest')
     while True:
@@ -38,7 +37,7 @@ def select_mask_roi(Fh):
 def off_axis_masks(Fh, f10=None, mask_radius=None, sqr_masks=False):
     f10 = np.array(f10)
     if f10 is None:
-        _, f10 = select_mask_roi(Fh)
+        _, f10 = select_mask_roi(np.abs(Fh)**(1/4))
     else:
         assert len(f10) == 2, "Peak coordinates have the wrong dimensionality."
         assert f10[0] < Fh.shape[0] and f10[1] < Fh.shape[1], "Invalid peak position given."
@@ -267,7 +266,7 @@ class OffAxisFilter(DFT):
 
         self.reset()
         Fh = self.forwards(fringes)
-        _, f10 = select_mask_roi(Fh, True)
+        _, f10 = select_mask_roi(np.abs(Fh)**(1/4))
         self._filter_radius, self._masks = off_axis_masks(Fh, f10=f10, mask_radius=mask_radius, sqr_masks=self._sqr_masks)
         freq = [f10[1] - Fh.shape[1] / 2, f10[0] - Fh.shape[0] / 2]
 
