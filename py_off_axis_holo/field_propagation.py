@@ -141,8 +141,7 @@ class Propagate(DFT, ABC):
         self._sz = sz
 
     def __call__(self, field, z):
-        Uz = self.propagate(field, z)
-        return Uz[self._nb:-self._nb, self._nb:-self._nb]
+        return self.propagate(field, z)
 
     @abstractmethod
     def propagate(self, field, z):
@@ -164,7 +163,6 @@ class Fresnel(Propagate):
         :rtype: ndarray<complex>
         """
 
-        assert field.shape == tuple(self.input_shape), "Dimensions must match."
         kx, ky = 2 * np.pi * self._Fx, 2 * np.pi * self._Fy
         Fh = self.forwards(field)
         H = np.exp(1j * z * self._k0) * np.exp(-1j * z * (kx ** 2 + ky ** 2) / (2 * self._k0))
@@ -186,7 +184,6 @@ class AngularSpectrum(Propagate):
         :rtype: ndarray<complex>
         """
 
-        assert field.shape == tuple(self.input_shape), "Dimensions must match."
         kx, ky = 2 * np.pi * self._Fx, 2 * np.pi * self._Fy
         Fh = self.forwards(field)
         kz = self._k0 - (kx ** 2 + ky ** 2) / (2 * self._k0)
