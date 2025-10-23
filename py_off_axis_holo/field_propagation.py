@@ -1,7 +1,7 @@
 import numpy as np
 from abc import ABC, abstractmethod
 from copy import copy
-from py_off_axis_holo.holography_helpers import gridspace
+from py_off_axis_holo.holography_helpers import freqspace
 from py_off_axis_holo.discrete_transforms import DFT
 
 
@@ -24,7 +24,7 @@ def fresnel(field, z, wl, sz, **kwargs):
 
     Nx, Ny = field.shape
     prop = Fresnel(Nx, Ny, wl, sz, **kwargs)
-    return prop.propagate(field, z)
+    return prop(field, z)
 
 
 def angular_spectrum(field, z, wl, sz, **kwargs):
@@ -46,7 +46,7 @@ def angular_spectrum(field, z, wl, sz, **kwargs):
 
     Nx, Ny = field.shape
     prop = AngularSpectrum(Nx, Ny, wl, sz, **kwargs)
-    return prop.propagate(field, z)
+    return prop(field, z)
 
 
 def rep_propagation(field, dists, wl, sz, method='Fresnel', **kwargs):
@@ -73,7 +73,7 @@ def rep_propagation(field, dists, wl, sz, method='Fresnel', **kwargs):
 
     recs = []
     for i, dist in enumerate(dists):
-        f = copy(prop.propagate(field, dist))
+        f = copy(prop(field, dist))
         recs.append(f)
     return dists, recs
 
@@ -109,7 +109,7 @@ def chain_propagation(field, dists, wl, sz, method='Fresnel', direction=1, **kwa
     d0 = 0
     recs = []
     for dist in dists:
-        field = prop.propagate(field, dist - d0)
+        field = prop(field, dist - d0)
         d0 = dist
         recs.append(field)
     return dists, recs
@@ -135,62 +135,26 @@ class Propagate(DFT, ABC):
         """
 
         super().__init__((M, N), nb, threads=threads, dtype=dtype, ortho=False, **kwargs)
-        self._X, self._Y = gridspace(N, M, 0, True)
-        self._Fx, self._Fy = gridspace(N, M, nb, True)
+        self._dims = np.array([M, N])
+        self._Fx, self._Fy = freqspace(N, M, sz, nb)
         self._k0 = 2 * np.pi / wl
         self._sz = sz
+
+    def __call__(self, field, z):
+        Uz = self.propagate(field, z)
+        return Uz[self._nb:-self._nb, self._nb:-self._nb]
 
     @abstractmethod
     def propagate(self, field, z):
         ...
-
-    def _image_plane(self):
-        """
-        Defines length scale of image plane.
-
-        :return: Meshgrids of X and Y
-        :rtype: ndarray<float>, ndarray<float>
-        """
-
-        x1 = self._X * self._sz
-        y1 = self._Y * self._sz
-        return x1, y1
-
-    def _object_plane(self, z):
-        """
-        Defines length scale of object plane given a distance z.
-
-        :param z: Propagation distance. Assumes same units as wavelength.
-        :type z: float
-        :return: Meshgrids of X and Y
-        :rtype: ndarray<float>, ndarray<float>
-        """
-
-        dy2, dx2 = tuple(2 * np.pi * z / (self.input_shape * self._sz * self._k0))
-        x2 = self._X * dx2
-        y2 = self._Y * dy2
-        return x2, y2
-
-    def _fourier_plane(self):
-        """
-        Defines length scale of Fourier plane.
-
-        :return: Meshgrids of X and Y
-        :rtype: ndarray<float>, ndarray<float>
-        """
-
-        dky, dkx = tuple(2 * np.pi / (self.output_shape * self._sz))
-        kx = self._Fx * dkx
-        ky = self._Fy * dky
-        return kx, ky
 
 
 class Fresnel(Propagate):
 
     def propagate(self, field, z):
         """
-        Performs Fresnel propagation via FFT. Note that the pixel size of the reconstruction is
-        wl * z / ( N * sz ).
+        Performs Fresnel propagation via FFT. Note the paraxial approximation to the
+        Helmholtz wave equation is used.
 
         :param field: Complex field to propagate.
         :type field: ndarray<complex>
@@ -201,13 +165,10 @@ class Fresnel(Propagate):
         """
 
         assert field.shape == tuple(self.input_shape), "Dimensions must match."
-        x2, y2 = self._object_plane(z)
-        x1, y1 = self._image_plane()
-
-        z_phase = (-1j * self._k0 / (2 * np.pi * z)) * np.exp(1j * self._k0 * z)
-        out_phase = np.exp((1j * self._k0 / (2 * z)) * (x2 ** 2 + y2 ** 2))
-        in_phase = np.exp((1j * self._k0 / (2 * z)) * (x1 ** 2 + y1 ** 2))
-        return z_phase * out_phase * self.forwards(field * in_phase)
+        kx, ky = 2 * np.pi * self._Fx, 2 * np.pi * self._Fy
+        Fh = self.forwards(field)
+        H = np.exp(1j * z * self._k0) * np.exp(-1j * z * (kx ** 2 + ky ** 2) / (2 * self._k0))
+        return self.backwards(Fh * H)
 
 
 class AngularSpectrum(Propagate):
@@ -226,7 +187,7 @@ class AngularSpectrum(Propagate):
         """
 
         assert field.shape == tuple(self.input_shape), "Dimensions must match."
-        kx, ky = self._fourier_plane()
+        kx, ky = 2 * np.pi * self._Fx, 2 * np.pi * self._Fy
         Fh = self.forwards(field)
         kz = self._k0 - (kx ** 2 + ky ** 2) / (2 * self._k0)
         H = np.exp(1j * z * kz)

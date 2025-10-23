@@ -76,6 +76,7 @@ class OffAxisFilter(DFT):
         self._dims = np.array([M, N])
         self._k0 = 2 * np.pi / wl
         self._sz = sz
+
         self._masks = None
         self._ref_wave = None
         self._filter_radius = None

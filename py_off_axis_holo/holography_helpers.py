@@ -77,10 +77,12 @@ def gridspace(N, M, nb=0, center=False):
     return np.meshgrid(x, y, indexing='xy')
 
 
-def freqspace(N, M, nb=0):
+def freqspace(N, M, sz=1.0, nb=0):
     """
     :param N, M: Shape of 2D arrays to operate on.
     :type N, M: int
+    :param sz: Pixel spacing.
+    :type sz: float
     :param nb: Number of zeros to pad array dimensions by.
     :type nb: int
     :return: Meshgrids of X and Y.
@@ -89,8 +91,8 @@ def freqspace(N, M, nb=0):
 
     nb = nb if nb > 0 else 0
     dims = 2 * nb + np.array([N, M])
-    x = np.fft.fftfreq(dims[0])
-    y = np.fft.fftfreq(dims[1])
+    x = np.fft.fftfreq(dims[0], d=sz)
+    y = np.fft.fftfreq(dims[1], d=sz)
     return np.meshgrid(x, y, indexing='xy')
 
 
