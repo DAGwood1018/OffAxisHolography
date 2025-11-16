@@ -237,7 +237,7 @@ class OffAxisFilter(DFT):
 
     def backwards(self, b):
         a = self._ifft(np.fft.ifftshift(b))
-        return self.unpad_arr(a) if self._nb > 0 else a
+        return self.unpad_array(a) if self._nb > 0 else a
 
     def add_window(self, window_fcn, **kwargs):
         if callable(window_fcn):
@@ -290,3 +290,4 @@ class OffAxisFilter(DFT):
         self._window = np.ones(self._dims)
         self._ifft.refactor(self.input_shape)
         return self
+
