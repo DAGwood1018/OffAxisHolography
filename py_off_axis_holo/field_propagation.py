@@ -135,7 +135,6 @@ class Propagate(DFT, ABC):
         """
 
         super().__init__((M, N), nb, threads=threads, dtype=dtype, ortho=False, **kwargs)
-        self._dims = np.array([M, N])
         self._Fx, self._Fy = freqspace(N, M, sz, nb)
         self._k0 = 2 * np.pi / wl
         self._sz = sz
@@ -166,6 +165,8 @@ class Fresnel(Propagate):
         kx, ky = 2 * np.pi * self._Fx, 2 * np.pi * self._Fy
         Fh = self.forwards(field)
         H = np.exp(1j * z * self._k0) * np.exp(-1j * z * (kx ** 2 + ky ** 2) / (2 * self._k0))
+        if self._stacked:
+            H = np.tile(H, self.output_shape[-1])
         return self.backwards(Fh * H)
 
 
@@ -188,4 +189,6 @@ class AngularSpectrum(Propagate):
         Fh = self.forwards(field)
         kz = self._k0 - (kx ** 2 + ky ** 2) / (2 * self._k0)
         H = np.exp(1j * z * kz)
+        if self._stacked:
+            H = np.tile(H, self.output_shape[-1])
         return self.backwards(Fh * H)

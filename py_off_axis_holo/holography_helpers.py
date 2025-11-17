@@ -96,7 +96,7 @@ def freqspace(N, M, sz=1.0, nb=0):
     return np.meshgrid(x, y, indexing='xy')
 
 
-def pad_arr(a, nb):
+def pad_arr(a, nb, axes=None):
     """
     Adds padding (zero entries) to a ndarray.
     Array shape becomes nb * a.shape.
@@ -105,17 +105,28 @@ def pad_arr(a, nb):
     :type a: ndarray
     :param nb: Number of zeros to pad array dimensions by.
     :type nb: int
+    :param axes: Set of axes specified in integers to pad. If None, do all.
+    :type axes: set<int>, None
     :return: Padded array.
     :rtype: ndarray
     """
 
     if nb <= 0:
         return a
-    padding = tuple((nb, nb) for i in range(len(a.shape)))
+    if axes is None:
+        padding = tuple((nb, nb) for _ in range(len(a.shape)))
+    else:
+        axes, padding = set(axes), []
+        for i in range(len(a.shape)):
+            if i in axes:
+                padding.append((nb, nb))
+            else:
+                padding.append((0, 0))
+        padding = tuple(padding)
     return np.pad(a, padding, mode='constant')
 
 
-def unpad_arr(a, nb):
+def unpad_arr(a, nb, axes=None):
     """
     Removes padding (zero entries) from a ndarray.
     Shape becomes a.shape // nb.
@@ -124,13 +135,24 @@ def unpad_arr(a, nb):
     :type a: ndarray
     :param nb: Number of zeros to pad array dimensions by.
     :type nb: int
+    :param axes: Set of axes specified in integers to unpad. If None, do all.
+    :type axes: set<int>, None
     :return: Unpadded array.
     :rtype: ndarray
     """
 
     if nb <= 0:
         return a
-    slice_indices = tuple(slice(nb, -nb) for i in range(len(a.shape)))
+    if axes is None:
+        slice_indices = tuple(slice(nb, -nb) for _ in range(len(a.shape)))
+    else:
+        axes, slice_indices = set(axes), []
+        for i in range(len(a.shape)):
+            if i in axes:
+                slice_indices.append(slice(nb, -nb))
+            else:
+                slice_indices.append(slice(0, -1))
+            slice_indices = tuple(slice_indices)
     return a[slice_indices]
 
 

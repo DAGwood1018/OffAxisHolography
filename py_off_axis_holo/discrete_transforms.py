@@ -155,7 +155,6 @@ class DiscreteTransform:
         self._dtype = dtype
         self._threads = threads
         self._dir = direction
-        self._stacked = False
         self._transform = self._build(dims, self._parse_flags(**kwargs))
 
     def __call__(self, a, **kwargs):
@@ -168,10 +167,7 @@ class DiscreteTransform:
         :rtype: ndarray<dtype>
         """
 
-        if self._stacked:
-            assert isinstance(a, list), "Expecting a list of arrays."
-            assert len(a) == self.shape[-1], f"Expecting to process a list of {self.shape[-1]} arrays."
-            a = np.stack(a)
+        a = np.array(a)
         a = a.astype(self._dtype)
         b = np.zeros(a.shape, dtype=self._dtype)
         self._transform.update_arrays(a, self.output)
@@ -187,7 +183,7 @@ class DiscreteTransform:
         :param flags: Additional flags for pyfftw.FFTW().
         :type flags: list
         :param axes: What axes to transform.
-        :type axes: tuple<int>
+        :type axes: tuple<int>, None
         :return: a pyFFTW FFTW object.
         """
 
@@ -273,41 +269,13 @@ class DiscreteTransform:
         :param flags: Additional flags for pyfftw.FFTW().
         :type flags: list
         :param axes: What axes to transform.
-        :type axes: tuple<int>
-        :return: bool
+        :type axes: tuple<int>, None
+        :return: DiscreteTransform
         """
 
         flags = self.flags if flags is None else flags
         self._transform = self._build(dims, flags=flags, axes=axes)
-        return True
-
-    def stack_arrays(self, n):
-        """
-        Adds another dimension that is not transformed allowing for multiple arrays to be processed at once.
-        Call refactor to undo this.
-
-        :param n: How many arrays you want to process.
-        :type n: int
-        :return: bool
-        """
-
-        self._stacked = True
-        dims = list(self.shape)
-        dims.append(n)
-        axes = tuple(i for i in range(len(dims) - 1))
-        self.refactor(dims, axes=axes, flags=None)
-        return True
-
-    def unstack_arrays(self):
-        """
-        Return to only processing a single array at a time.
-
-        :return: bool
-        """
-
-        self._stacked = False
-        dims = self.shape[:-1]
-        return self.refactor(dims)
+        return self
 
 
 class DFT:
@@ -338,6 +306,7 @@ class DFT:
 
         self._nb = nb
         self._ortho = ortho
+        self._stacked = False
         self._fft = FFT(padded_shape, threads=threads, dtype=dtype, **kwargs) if not re else \
             DCT(padded_shape, threads=threads, dtype=dtype, **kwargs)
         self._ifft = IFFT(padded_shape, threads=threads, dtype=dtype, **kwargs) if not re else \
@@ -371,7 +340,8 @@ class DFT:
         :rtype: ndarray<complex>
         """
 
-        return pad_arr(a, self._nb)
+        axes = set(range(0, len(self.input_shape)-1)) if self._stacked else None
+        return pad_arr(a, self._nb, axes=axes)
 
     def unpad_array(self, a):
         """
@@ -383,7 +353,8 @@ class DFT:
         :rtype: ndarray<complex>
         """
 
-        return unpad_arr(a, self._nb)
+        axes = set(range(0, len(self.input_shape) - 1)) if self._stacked else None
+        return unpad_arr(a, self._nb, axes=axes)
 
     def forwards(self, a):
         """
@@ -415,6 +386,47 @@ class DFT:
         if self._nb > 0:
             return self.unpad_array(a)
         return a
+
+    def stack_arrays(self, n):
+        """
+        Adds another dimension that is not transformed allowing for multiple arrays to be processed at once.
+
+        :param n: How many arrays you want to process.
+        :type n: int
+        :return: bool
+        """
+
+        if self._stacked:
+            self.unstack_arrays()
+
+        self._stacked = True
+        dims_in = list(self.input_shape)
+        dims_in.append(n)
+        axes_in = tuple(i for i in range(len(dims_in) - 1))
+        dims_out = list(self.output_shape)
+        dims_out.append(n)
+        axes_out = tuple(i for i in range(len(dims_out) - 1))
+
+        self._fft = self._fft.refactor(dims_in, axes=axes_in)
+        self._ifft = self._ifft.refactor(dims_out, axes=axes_out)
+        return True
+
+    def unstack_arrays(self):
+        """
+        Return to only processing a single array at a time.
+
+        :return: bool
+        """
+
+        if not self._stacked:
+            return False
+
+        self._stacked = False
+        dims_in = self.input_shape[:-1]
+        dims_out = self.output_shape[:-1]
+        self._fft = self._fft.refactor(dims_in)
+        self._ifft = self._ifft.refactor(dims_out)
+        return True
 
 
 
