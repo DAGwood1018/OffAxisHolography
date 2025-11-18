@@ -172,7 +172,7 @@ class DiscreteTransform:
         b = np.zeros(a.shape, dtype=self._dtype)
         self._transform.update_arrays(a, self.output)
         b[:] = self._transform(**kwargs)
-        return np.unstack(b, axis=-1) if self._stacked else b
+        return b
 
     def _build(self, dims, flags=None, axes=None):
         """
@@ -340,7 +340,7 @@ class DFT:
         :rtype: ndarray<complex>
         """
 
-        axes = set(range(0, len(self.input_shape)-1)) if self._stacked else None
+        axes = set(range(1, len(self.input_shape))) if self._stacked else None
         return pad_arr(a, self._nb, axes=axes)
 
     def unpad_array(self, a):
@@ -353,7 +353,7 @@ class DFT:
         :rtype: ndarray<complex>
         """
 
-        axes = set(range(0, len(self.input_shape) - 1)) if self._stacked else None
+        axes = set(range(1, len(self.input_shape))) if self._stacked else None
         return unpad_arr(a, self._nb, axes=axes)
 
     def forwards(self, a):
@@ -400,12 +400,11 @@ class DFT:
             self.unstack_arrays()
 
         self._stacked = True
-        dims_in = list(self.input_shape)
-        dims_in.append(n)
-        axes_in = tuple(i for i in range(len(dims_in) - 1))
-        dims_out = list(self.output_shape)
-        dims_out.append(n)
-        axes_out = tuple(i for i in range(len(dims_out) - 1))
+        dims_in, dims_out = [n], [n]
+        dims_in.extend(list(self.input_shape))
+        axes_in = tuple(i for i in range(1, len(dims_in)))
+        dims_out.extend(list(self.input_shape))
+        axes_out = tuple(i for i in range(1, len(dims_out)))
 
         self._fft = self._fft.refactor(dims_in, axes=axes_in)
         self._ifft = self._ifft.refactor(dims_out, axes=axes_out)
@@ -422,8 +421,8 @@ class DFT:
             return False
 
         self._stacked = False
-        dims_in = self.input_shape[:-1]
-        dims_out = self.output_shape[:-1]
+        dims_in = self.input_shape[1:]
+        dims_out = self.output_shape[1:]
         self._fft = self._fft.refactor(dims_in)
         self._ifft = self._ifft.refactor(dims_out)
         return True

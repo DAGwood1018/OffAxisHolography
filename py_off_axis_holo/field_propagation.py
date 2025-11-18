@@ -166,7 +166,7 @@ class Fresnel(Propagate):
         Fh = self.forwards(field)
         H = np.exp(1j * z * self._k0) * np.exp(-1j * z * (kx ** 2 + ky ** 2) / (2 * self._k0))
         if self._stacked:
-            H = np.tile(H, self.output_shape[-1])
+            H = np.stack([H for _ in range(self.output_shape[0])])
         return self.backwards(Fh * H)
 
 
@@ -190,5 +190,5 @@ class AngularSpectrum(Propagate):
         kz = self._k0 - (kx ** 2 + ky ** 2) / (2 * self._k0)
         H = np.exp(1j * z * kz)
         if self._stacked:
-            H = np.tile(H, self.output_shape[-1])
+            H = np.stack([H for _ in range(self.output_shape[0])])
         return self.backwards(Fh * H)

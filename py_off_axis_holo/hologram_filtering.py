@@ -91,25 +91,27 @@ class OffAxisFilter(DFT):
             Fh = self.forwards(fringes)
             if self_RCH:
                 RCH = Fh.copy()
-                _, RCH_masks = off_axis_masks(np.zeros(self._dims), f10=self._filter_center,
+                dims = self.input_shape[1:] if self._stacked else self.input_shape
+                _, RCH_masks = off_axis_masks(np.zeros(dims), f10=self._filter_center,
                                               mask_radius=np.round(0.1*self._filter_radius), sqr_masks=self._sqr_masks)
-                RCH *= np.tile(RCH_masks[0], self.input_shape[-1]) if self._stacked else RCH_masks[0]
+                RCH *= np.stack([RCH_masks[0] for _ in range(self.input_shape[0])]) if self._stacked else RCH_masks[0]
                 RCH = self.crop_to_mask(RCH, self._masks[0])
-            Fh *= np.tile(self._masks[0], self.input_shape[-1]) if self._stacked else self._masks[0]
+            Fh *= np.stack([self._masks[0] for _ in range(self.input_shape[0])]) if self._stacked else self._masks[0]
             Fh = self.crop_to_mask(Fh, self._masks[0])
         else:
             Fh = self.forwards(fringes * self._ref_wave)
             if self_RCH:
                 RCH = Fh.copy()
-                _, RCH_masks = off_axis_masks(np.zeros(self._dims), f10=self._filter_center,
+                dims = self.input_shape[1:] if self._stacked else self.input_shape
+                _, RCH_masks = off_axis_masks(dims, f10=self._filter_center,
                                               mask_radius=np.round(0.1*self._filter_radius), sqr_masks=self._sqr_masks)
-                RCH *= np.tile(RCH_masks[1], self.input_shape[-1]) if self._stacked else RCH_masks[1]
+                RCH *= np.stack([RCH_masks[1] for _ in range(self.input_shape[0])]) if self._stacked else RCH_masks[1]
                 RCH = self.crop_to_mask(RCH, self._masks[1])
-            Fh *= np.tile(self._masks[1], self.input_shape[-1]) if self._stacked else self._masks[1]
+            Fh *= np.stack([self._masks[1] for _ in range(self.input_shape[0])]) if self._stacked else self._masks[1]
             Fh = self.crop_to_mask(Fh, self._masks[1])
 
         if tuple(self.output_shape) != tuple(Fh.shape):
-            self._ifft.refactor(Fh.shape, axes={0, 1})
+            self._ifft.refactor(Fh.shape, axes=(1, 2))
         field = self.backwards(Fh)
         if self_RCH:
             RCH_field = self.backwards(RCH)
@@ -210,7 +212,7 @@ class OffAxisFilter(DFT):
         coords = np.argwhere(mask)
         m_min, n_min = coords.min(axis=0)
         m_max, n_max = coords.max(axis=0)
-        return a[m_min:m_max + 1, n_min:n_max + 1, :] if self._stacked else a[m_min:m_max + 1, n_min:n_max + 1]
+        return a[:, m_min:m_max + 1, n_min:n_max + 1] if self._stacked else a[m_min:m_max + 1, n_min:n_max + 1]
 
     def _visualize_roi(self, fringes):
         if not self._ref_wave is None:
@@ -229,14 +231,14 @@ class OffAxisFilter(DFT):
         return True
 
     def forwards(self, a):
-        window = np.tile(self._window, self.input_shape[:-1]) if self._stacked else self._window
+        window = np.stack([self._window for _ in range(self.input_shape[0])]) if self._stacked else self._window
         return super().forwards(a * window)
 
     def add_window(self, window_fcn, **kwargs):
         if callable(window_fcn):
             try:
-                self._window = window_fcn(self.input_shape[:-1], **kwargs) \
-                    if self._stacked else window_fcn(self.input_shape, **kwargs)
+                self._window = window_fcn(self._input_shape[1:], **kwargs) \
+                    if self._stacked else window_fcn(self._input_shape, **kwargs)
                 return True
             except TypeError:
                 warn("Invalid window function provided.")
@@ -285,4 +287,6 @@ class OffAxisFilter(DFT):
         self._window = np.ones(self._dims)
         self._ifft.refactor(self.input_shape)
         return self
+
+
 
