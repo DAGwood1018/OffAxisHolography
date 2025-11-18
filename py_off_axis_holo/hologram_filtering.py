@@ -111,7 +111,8 @@ class OffAxisFilter(DFT):
             Fh = self.crop_to_mask(Fh, self._masks[1])
 
         if tuple(self.output_shape) != tuple(Fh.shape):
-            self._ifft.refactor(Fh.shape, axes=(1, 2))
+            axes = (1, 2) if self._stacked else None
+            self._ifft.refactor(Fh.shape, axes=axes)
         field = self.backwards(Fh)
         if self_RCH:
             RCH_field = self.backwards(RCH)
