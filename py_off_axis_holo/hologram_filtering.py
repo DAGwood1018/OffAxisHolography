@@ -237,8 +237,7 @@ class OffAxisFilter(DFT):
     def add_window(self, window_fcn, **kwargs):
         if callable(window_fcn):
             try:
-                self._window = window_fcn(self._input_shape[1:], **kwargs) \
-                    if self._stacked else window_fcn(self._input_shape, **kwargs)
+                self._window = window_fcn(self._dims, **kwargs)
                 return True
             except TypeError:
                 warn("Invalid window function provided.")
