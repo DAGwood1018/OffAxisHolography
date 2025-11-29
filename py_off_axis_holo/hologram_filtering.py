@@ -235,10 +235,6 @@ class OffAxisFilter(DFT):
         window = np.stack([self._window for _ in range(self.input_shape[0])]) if self._stacked else self._window
         return super().forwards(a * window)
 
-    def backwards(self, b):
-        assert tuple(b.shape) == self.output_shape, "Shape of array must be " + str(self.output_shape)
-        return self._ifft(np.fft.ifftshift(b), ortho=self._ortho, normalise_idft=False)
-
     def add_window(self, window_fcn, **kwargs):
         if callable(window_fcn):
             try:
