@@ -92,7 +92,7 @@ class OffAxisFilter(DFT):
             if self_RCH:
                 RCH = Fh.copy()
                 dims = self.input_shape[1:] if self._stacked else self.input_shape
-                _, RCH_masks = off_axis_masks(np.zeros(dims), f10=self._filter_center,
+                _, RCH_masks = off_axis_masks(np.empty(dims), f10=self._filter_center,
                                               mask_radius=np.round(0.1*self._filter_radius), sqr_masks=self._sqr_masks)
                 RCH *= np.stack([RCH_masks[0] for _ in range(self.input_shape[0])]) if self._stacked else RCH_masks[0]
                 RCH = self.crop_to_mask(RCH, self._masks[0])
@@ -103,7 +103,7 @@ class OffAxisFilter(DFT):
             if self_RCH:
                 RCH = Fh.copy()
                 dims = self.input_shape[1:] if self._stacked else self.input_shape
-                _, RCH_masks = off_axis_masks(dims, f10=self._filter_center,
+                _, RCH_masks = off_axis_masks(np.empty(dims), f10=self._filter_center,
                                               mask_radius=np.round(0.1*self._filter_radius), sqr_masks=self._sqr_masks)
                 RCH *= np.stack([RCH_masks[1] for _ in range(self.input_shape[0])]) if self._stacked else RCH_masks[1]
                 RCH = self.crop_to_mask(RCH, self._masks[1])
@@ -234,6 +234,10 @@ class OffAxisFilter(DFT):
     def forwards(self, a):
         window = np.stack([self._window for _ in range(self.input_shape[0])]) if self._stacked else self._window
         return super().forwards(a * window)
+
+    def backwards(self, b):
+        assert tuple(b.shape) == self.output_shape, "Shape of array must be " + str(self.output_shape)
+        return self._ifft(np.fft.ifftshift(b), ortho=self._ortho, normalise_idft=False)
 
     def add_window(self, window_fcn, **kwargs):
         if callable(window_fcn):

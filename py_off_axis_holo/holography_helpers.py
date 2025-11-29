@@ -151,7 +151,7 @@ def unpad_arr(a, nb, axes=None):
             if i in axes:
                 slice_indices.append(slice(nb, -nb))
             else:
-                slice_indices.append(slice(0, -1))
+                slice_indices.append(slice(None))
         slice_indices = tuple(slice_indices)
     return a[slice_indices]
 
