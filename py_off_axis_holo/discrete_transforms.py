@@ -340,8 +340,13 @@ class DFT:
         :rtype: ndarray<complex>
         """
 
-        axes = set(range(1, len(self.input_shape))) if self._stacked else None
-        return pad_arr(a, self._nb, axes=axes)
+        if self._stacked:
+            nb = [0]
+            for i in range(1, len(self.input_shape)):
+                nb.append(self._nb)
+        else:
+            nb = self._nb
+        return pad_arr(a, nb)
 
     def unpad_array(self, a):
         """
@@ -353,8 +358,13 @@ class DFT:
         :rtype: ndarray<complex>
         """
 
-        axes = set(range(1, len(self.input_shape))) if self._stacked else None
-        return unpad_arr(a, self._nb, axes=axes)
+        if self._stacked:
+            nb = [0]
+            for i in range(1, len(self.input_shape)):
+                nb.append(self._nb)
+        else:
+            nb = self._nb
+        return unpad_arr(a, nb)
 
     def forwards(self, a):
         """

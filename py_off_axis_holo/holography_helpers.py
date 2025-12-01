@@ -96,64 +96,58 @@ def freqspace(N, M, sz=1.0, nb=0):
     return np.meshgrid(x, y, indexing='xy')
 
 
-def pad_arr(a, nb, axes=None):
+def pad_arr(a, nb):
     """
     Adds padding (zero entries) to a ndarray.
-    Array shape becomes nb * a.shape.
+    Array shape becomes 2*nb + a.shape.
 
     :param a: Array to pad.
     :type a: ndarray
-    :param nb: Number of zeros to pad array dimensions by.
-    :type nb: int
-    :param axes: Set of axes specified in integers to pad. If None, do all.
-    :type axes: set<int>, None
+    :param nb: Number of zeros to pad each array dimension by.
+    :type nb: list<int>
     :return: Padded array.
     :rtype: ndarray
     """
 
-    if nb <= 0:
-        return a
-    if axes is None:
-        padding = tuple((nb, nb) for _ in range(len(a.shape)))
-    else:
-        axes, padding = set(axes), []
-        for i in range(len(a.shape)):
-            if i in axes:
-                padding.append((nb, nb))
-            else:
-                padding.append((0, 0))
-        padding = tuple(padding)
+    if type(nb) is int:
+        if nb <= 0:
+            return a
+        nb = [nb for _ in range(len(a.shape))]
+    if len(nb) < len(a.shape):
+        for i in range(len(a.shape)-len(nb)):
+            nb.append(0)
+    padding = tuple((nb[i], nb[i]) for i in range(len(a.shape)))
     return np.pad(a, padding, mode='constant')
 
 
-def unpad_arr(a, nb, axes=None):
+def unpad_arr(a, nb):
     """
     Removes padding (zero entries) from a ndarray.
-    Shape becomes a.shape // nb.
+    Shape becomes a.shape - 2 * nb.
 
     :param a: Array to unpad.
     :type a: ndarray
     :param nb: Number of zeros to pad array dimensions by.
     :type nb: int
-    :param axes: Set of axes specified in integers to unpad. If None, do all.
-    :type axes: set<int>, None
     :return: Unpadded array.
     :rtype: ndarray
     """
 
-    if nb <= 0:
-        return a
-    if axes is None:
-        slice_indices = tuple(slice(nb, -nb) for _ in range(len(a.shape)))
-    else:
-        axes, slice_indices = set(axes), []
-        for i in range(len(a.shape)):
-            if i in axes:
-                slice_indices.append(slice(nb, -nb))
-            else:
-                slice_indices.append(slice(None))
-        slice_indices = tuple(slice_indices)
-    return a[slice_indices]
+    if type(nb) is int:
+        if nb <= 0:
+            return a
+        nb = [nb for _ in range(len(a.shape))]
+    if len(nb) < len(a.shape):
+        for i in range(len(a.shape)-len(nb)):
+            nb.append(0)
+
+    slice_indices = []
+    for i in range(len(a.shape)):
+        if nb[i] == 0:
+            slice_indices.append(slice(None))
+        else:
+            slice_indices.append(slice(nb[i], -nb[i]))
+    return a[tuple(slice_indices)]
 
 
 def pad_to_square(image):

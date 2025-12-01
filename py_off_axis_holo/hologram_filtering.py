@@ -5,7 +5,7 @@ import cv2
 from scipy.optimize import minimize
 from skimage.feature import peak_local_max
 from py_off_axis_holo.discrete_transforms import DFT
-from py_off_axis_holo.holography_helpers import ref_phase_shift, gridspace, format_img, crop_to_mask
+from py_off_axis_holo.holography_helpers import ref_phase_shift, gridspace, format_img, crop_to_mask, unpad_arr
 from warnings import warn
 
 logging.basicConfig(level=logging.INFO,
@@ -234,6 +234,28 @@ class OffAxisFilter(DFT):
     def forwards(self, a):
         window = np.stack([self._window for _ in range(self.input_shape[0])]) if self._stacked else self._window
         return super().forwards(a * window)
+
+    def backwards(self, b):
+        """
+        Inverse Fourier transform
+
+        :param b: Array to transform
+        :type b: ndarray<complex>
+        :return: Transformed array.
+        :rtype: ndarray<complex>
+        """
+
+        assert tuple(b.shape) == self.output_shape, "Shape of array must be " + str(self.output_shape)
+        a = self._ifft(np.fft.ifftshift(b), ortho=self._ortho, normalise_idft=False)
+        if self._nb > 0:
+            nb = [0] if self._stacked else []
+            axes = [1, 2] if self._stacked else [0, 1]
+            for i in axes:
+                new_nb = (2*self._nb / self.input_shape[i]) * self.output_shape[i]
+                new_nb // 2
+                nb.append(int(new_nb))
+            return unpad_arr(a, nb)
+        return a
 
     def add_window(self, window_fcn, **kwargs):
         if callable(window_fcn):
