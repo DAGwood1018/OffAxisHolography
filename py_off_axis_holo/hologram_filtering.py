@@ -32,7 +32,26 @@ def select_mask_roi(Fh):
     f1 = np.array([(peaks[0][0]), (peaks[0][1])])
     cv2.destroyWindow('Masking')
     logging.info(f'Selected ROI centered at a tilt of ({f1[0]}, {f1[1]}).')
-    return roi_mask, f1
+    return ROI, f1
+
+def find_peak_in_roi(Fh, ROI):
+    Fh_img = format_img(Fh)
+    cv2.namedWindow('Masking', cv2.WINDOW_NORMAL)
+    cv2.setWindowTitle('Masking', 'Select Off-axis Order of Interest')
+    while True:
+        roi_mask = np.zeros(Fh_img.shape)
+        roi_mask[int(ROI[1]):int(ROI[1] + ROI[3]), int(ROI[0]): int(ROI[0] + ROI[2])] = 1
+        if ROI == (0, 0, 0, 0):
+            cv2.destroyWindow('Masking')
+            raise RuntimeError("ROI selection cancelled.")
+
+        peaks = peak_local_max(Fh_img * roi_mask, min_distance=min([ROI[2], ROI[3]]))
+        if len(peaks) == 1:
+            break
+        warn("Failed to identify a single peak. Try a different ROI.")
+
+    f1 = np.array([(peaks[0][0]), (peaks[0][1])])
+    return f1
 
 def off_axis_masks(Fh, f10=None, mask_radius=None, sqr_masks=False):
     f10 = np.array(f10)
@@ -279,12 +298,13 @@ class OffAxisFilter(DFT):
         :param optimize: Optimize the mask center according to some cost function.
         :param visualize: Show image of mask.
         :param kwargs: Optional arguments to optimization routine.
-        :return:
+        :return: The ROI mask you select for calibration.
+        :rtype: list
         """
 
         self.reset()
         Fh = self.forwards(fringes)
-        _, f10 = select_mask_roi(np.abs(Fh)**(1/4))
+        roi, f10 = select_mask_roi(np.abs(Fh)**(1/4))
         self._filter_radius, self._masks = off_axis_masks(Fh, f10=f10, mask_radius=mask_radius, sqr_masks=self._sqr_masks)
         freq = [f10[1] - Fh.shape[1] / 2, f10[0] - Fh.shape[0] / 2]
 
@@ -300,7 +320,31 @@ class OffAxisFilter(DFT):
         self._ref_wave = self.construct_reference(freq, self._dims[0], self._dims[1])
         if visualize:
             self._visualize_roi(fringes)
-        return True
+        return roi
+
+    def auto_calibrate(self, fringes, roi, mask_radius=None, **kwargs):
+        """
+        :param fringes: Hologram (typically of background) to calibrate phase filtering to.
+        :param roi: A pre-selected ROI to calibrate with.
+        :param mask_radius: Override the automatic radius of the mask if not None.
+        :param kwargs: Optional arguments to optimization routine.
+        """
+
+        self.reset()
+        Fh = self.forwards(fringes)
+        f10 = find_peak_in_roi(np.abs(Fh)**(1/4), roi)
+        self._filter_radius, self._masks = off_axis_masks(Fh, f10=f10, mask_radius=mask_radius, sqr_masks=self._sqr_masks)
+        freq = [f10[1] - Fh.shape[1] / 2, f10[0] - Fh.shape[0] / 2]
+
+        try:
+            Fh = self.forwards(fringes) * self._masks[0]
+            phi = np.angle(self.backwards(Fh))
+            freq = self._optimize_tilt(freq, phi, **kwargs)
+        except RuntimeError:
+            warn("Could not align to tilt.")
+
+        self._filter_center = [freq[1] + Fh.shape[1] / 2, freq[0] + Fh.shape[0] / 2]
+        self._ref_wave = self.construct_reference(freq, self._dims[0], self._dims[1])
 
     def reset(self):
         self.unstack_arrays()
