@@ -320,7 +320,7 @@ class OffAxisFilter(DFT):
         self._ref_wave = self.construct_reference(freq, self._dims[0], self._dims[1])
         if visualize:
             self._visualize_roi(fringes)
-        return roi
+        return roi, f10
 
     def auto_calibrate(self, fringes, roi, mask_radius=None, **kwargs):
         """
@@ -345,6 +345,7 @@ class OffAxisFilter(DFT):
 
         self._filter_center = [freq[1] + Fh.shape[1] / 2, freq[0] + Fh.shape[0] / 2]
         self._ref_wave = self.construct_reference(freq, self._dims[0], self._dims[1])
+        return f10
 
     def reset(self):
         self.unstack_arrays()
