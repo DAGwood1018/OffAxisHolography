@@ -36,13 +36,10 @@ def select_mask_roi(Fh):
 
 def find_peak_in_roi(Fh, ROI):
     Fh_img = format_img(Fh)
-    cv2.namedWindow('Masking', cv2.WINDOW_NORMAL)
-    cv2.setWindowTitle('Masking', 'Select Off-axis Order of Interest')
     while True:
         roi_mask = np.zeros(Fh_img.shape)
         roi_mask[int(ROI[1]):int(ROI[1] + ROI[3]), int(ROI[0]): int(ROI[0] + ROI[2])] = 1
         if ROI == (0, 0, 0, 0):
-            cv2.destroyWindow('Masking')
             raise RuntimeError("ROI selection cancelled.")
 
         peaks = peak_local_max(Fh_img * roi_mask, min_distance=min([ROI[2], ROI[3]]))
