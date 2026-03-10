@@ -49,7 +49,7 @@ def angular_spectrum(field, z, wl, sz, **kwargs):
     return prop(field, z)
 
 
-def rep_propagation(field, dists, wl, sz, method='Fresnel', **kwargs):
+def propagate(field, dists, wl, sz, method='Fresnel', **kwargs):
     """
     Performs numerical propagation independently for a number of distances.
 
@@ -78,7 +78,7 @@ def rep_propagation(field, dists, wl, sz, method='Fresnel', **kwargs):
     return dists, recs
 
 
-def chain_propagation(field, dists, wl, sz, method='Fresnel', direction=1, **kwargs):
+def chain_propagate(field, dists, wl, sz, method='Fresnel', direction=1, **kwargs):
     """
     Performs numerical propagation sequentially in a direction for a number of distances.
 

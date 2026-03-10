@@ -3,18 +3,49 @@ import numpy as np
 from scipy import signal
 
 
-def format_img(arr):
+def format_holo(arr):
+    """
+    :param arr: Hologram image.
+    :type arr: ndaray
+    :return: Hologram formatted to uint8.
+    :rtype: ndarray<unit8>
+    """
+
     diff = arr.max() - arr.min()
     img = cv2.convertScaleAbs(arr, alpha=255.0 / diff, beta=-arr.min() * 255.0 / diff)
     return img.astype('uint8', copy=False)
 
 
 def ref_phase_shift(XY, tilt, k0, sz):
+    """
+    :param XY: The  X, Y meshgrids.
+    :type XY: iterable<ndarray, ndarray>
+    :param tilt: The tilt along x and y
+    :type tilt: iterable<float, float>
+    :param k0: The wavevector of the imaging light.
+    :type k0: float
+    :param sz: The size of the camera pixels.
+    :type sz: float
+    :return: Plane wave with phase shift given by the applied tilt.
+    :rtype: ndarray
+    """
+
     k = k0 * np.sin(tilt)
     return np.exp(1j * sz * (k[0] * XY[0] + k[1] * XY[1]))
 
 
 def optimal_tilt(dims, k0, sz):
+    """
+    :param dims: The  X, Y meshgrids.
+    :type dims: iterable<int, int>
+    :param k0: The wavevector of the imaging light.
+    :type k0: float
+    :param sz: The size of the camera pixels.
+    :type sz: float
+    :return: The tilt that will give the max/ideal resolution given system constraints.
+    :rtype: ndarray
+    """
+
     N, M = dims[0], dims[1]
     fx = (8 * N + M - np.sqrt(8 * (N ** 2 + M ** 2) + 2 * N * M)) / 14
     fy = (N + 8 * M - np.sqrt(8 * (N ** 2 + M ** 2) + 2 * N * M)) / 14

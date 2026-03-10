@@ -5,7 +5,7 @@ import cv2
 from scipy.optimize import minimize
 from skimage.feature import peak_local_max
 from py_off_axis_holo.discrete_transforms import DFT
-from py_off_axis_holo.holography_helpers import ref_phase_shift, gridspace, format_img, crop_to_mask, unpad_arr
+from py_off_axis_holo.holography_helpers import ref_phase_shift, gridspace, format_holo, crop_to_mask, unpad_arr
 from warnings import warn
 
 logging.basicConfig(level=logging.INFO,
@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.INFO,
                     handlers=[logging.StreamHandler()])
 
 def select_mask_roi(Fh):
-    Fh_img = format_img(Fh)
+    Fh_img = format_holo(Fh)
     cv2.namedWindow('Masking', cv2.WINDOW_NORMAL)
     cv2.setWindowTitle('Masking', 'Select Off-axis Order of Interest')
     while True:
@@ -35,7 +35,7 @@ def select_mask_roi(Fh):
     return ROI, f1
 
 def find_peak_in_roi(Fh, ROI):
-    Fh_img = format_img(Fh)
+    Fh_img = format_holo(Fh)
     while True:
         roi_mask = np.zeros(Fh_img.shape)
         roi_mask[int(ROI[1]):int(ROI[1] + ROI[3]), int(ROI[0]): int(ROI[0] + ROI[2])] = 1
@@ -235,7 +235,7 @@ class OffAxisFilter(DFT):
         if not self._ref_wave is None:
             fringes = fringes * self._ref_wave
         Fh = self.forwards(fringes)
-        Fh = format_img(np.abs(Fh)**(1/4))
+        Fh = format_holo(np.abs(Fh) ** (1 / 4))
 
         cv2.namedWindow('visualize_roi', cv2.WINDOW_NORMAL)
         cv2.imshow('visualize_roi', Fh)
