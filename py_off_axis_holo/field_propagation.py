@@ -140,55 +140,43 @@ class Propagate(DFT, ABC):
         self._sz = sz
 
     def __call__(self, field, z):
-        return self.propagate(field, z)
+        if self._stacked:
+            assert field.shape[0] == len(z) == self.input_shape[0], \
+                f"{self.input_shape[0]} fields and distances must be provided."
+        Fh = self.forwards(field)
+        return self.backwards(Fh * self.propagator(z))
 
     @abstractmethod
-    def propagate(self, field, z):
+    def propagator(self, z):
         ...
 
 
 class Fresnel(Propagate):
 
-    def propagate(self, field, z):
+    def propagator(self, z):
         """
-        Performs Fresnel propagation via FFT. Note the paraxial approximation to the
-        Helmholtz wave equation is used.
-
-        :param field: Complex field to propagate.
-        :type field: ndarray<complex>
         :param z: Propagation distance.
         :type z: float
-        :return: Propagated field.
+        :return: Fresnel field propagator.
         :rtype: ndarray<complex>
         """
 
         kx, ky = 2 * np.pi * self._Fx, 2 * np.pi * self._Fy
-        Fh = self.forwards(field)
-        H = np.exp(1j * z * self._k0) * np.exp(-1j * z * (kx ** 2 + ky ** 2) / (2 * self._k0))
-        if self._stacked:
-            H = np.stack([H for _ in range(self.output_shape[0])])
-        return self.backwards(Fh * H)
+        return np.exp(1j * z * self._k0) * np.exp(-1j * z * (kx ** 2 + ky ** 2) / (2 * self._k0))
 
 
 class AngularSpectrum(Propagate):
 
-    def propagate(self, field, z):
+    def propagator(self, z):
         """
-        Performs angular spectrum method via FFT. Note the paraxial approximation to the
-        Helmholtz wave equation is used.
-
-        :param field: Complex field to propagate.
-        :type field: ndarray<complex>
         :param z: Propagation distance.
         :type z: float
-        :return: Propagated field.
+        :return: Angular spectrum field propagator.
         :rtype: ndarray<complex>
         """
 
         kx, ky = 2 * np.pi * self._Fx, 2 * np.pi * self._Fy
-        Fh = self.forwards(field)
         kz = self._k0 - (kx ** 2 + ky ** 2) / (2 * self._k0)
-        H = np.exp(1j * z * kz)
-        if self._stacked:
-            H = np.stack([H for _ in range(self.output_shape[0])])
-        return self.backwards(Fh * H)
+        return np.exp(1j * z * kz)
+
+
