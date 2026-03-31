@@ -1,33 +1,11 @@
 import numpy as np
 from abc import ABC, abstractmethod
-from copy import copy
+from collections.abc import Iterable
 from py_off_axis_holo.holography_helpers import freqspace
 from py_off_axis_holo.discrete_transforms import DFT
 
 
-def fresnel(field, z, wl, sz, **kwargs):
-    """
-    Performs Fresnel propagation. Consistent units assumed.
-
-    :param field: Complex field to propagate.
-    :type field: ndarray<complex>
-    :param z: Propagation distance.
-    :type z: float
-    :param wl: Wavelength of light.
-    :type wl: float
-    :param sz: Size of each grid point.
-    :type sz: float
-    :param kwargs: Optional arguments for Frensel class object
-    :return: Propagated field.
-    :rtype: ndarray<complex>
-    """
-
-    Nx, Ny = field.shape
-    prop = Fresnel(Nx, Ny, wl, sz, **kwargs)
-    return prop(field, z)
-
-
-def angular_spectrum(field, z, wl, sz, **kwargs):
+def prop_angular_spectrum(field, z, wl, sz, **kwargs):
     """
     Performs propagation via angular spectrum method. Consistent units assumed.
 
@@ -47,73 +25,6 @@ def angular_spectrum(field, z, wl, sz, **kwargs):
     Nx, Ny = field.shape
     prop = AngularSpectrum(Nx, Ny, wl, sz, **kwargs)
     return prop(field, z)
-
-
-def propagate(field, dists, wl, sz, method='Fresnel', **kwargs):
-    """
-    Performs numerical propagation independently for a number of distances.
-
-    :param field: Complex field to propagate.
-    :type field: ndarray<complex>
-    :param dists: Distances to propagate to.
-    :type dists: list<float>
-    :param wl: Wavelength of light.
-    :type wl: float
-    :param sz: Size of each grid point. Assumes sames dimension as wavelength.
-    :type sz: float
-    :param method: Method to use. If not 'Fresnel' then defaults to 'AngularSpectrum'.
-    :type method: str
-    :param kwargs: Method specific optional arguments.
-    :return: Distances and propagated fields.
-    :rtype: list<float>, list<ndarray>
-    """
-
-    Nx, Ny = field.shape
-    prop = Fresnel(Nx, Ny, wl, sz, **kwargs) if method == 'Fresnel' else AngularSpectrum(Nx, Ny, wl, sz, **kwargs)
-
-    recs = []
-    for i, dist in enumerate(dists):
-        f = copy(prop(field, dist))
-        recs.append(f)
-    return dists, recs
-
-
-def chain_propagate(field, dists, wl, sz, method='Fresnel', direction=1, **kwargs):
-    """
-    Performs numerical propagation sequentially in a direction for a number of distances.
-
-    :param field: Complex field to propagate.
-    :type field: ndarray<complex>
-    :param dists: Distances to propagate to.
-    :type dists: list<float>
-    :param wl: Wavelength of light.
-    :type wl: float
-    :param sz: Size of each grid point. Assumes sames dimension as wavelength.
-    :type sz: float
-    :param direction: Direction to propagate. +1 for z or -1 for -z. Default is '1'.
-    :rtype direction: int
-    :param method: Method to use. If not 'Fresnel' then defaults to 'AngularSpectrum'.
-    :type method: str
-    :param kwargs: Method specific optional arguments.
-    :return: Distances and propagated fields.
-    :rtype: list<float>, list<ndarray>
-    """
-
-    dists = set(np.abs(dists))
-    direction = 1 if direction >= 0 else -1
-    dists = direction * np.sort(list(dists))
-
-    Nx, Ny = field.shape
-    prop = Fresnel(Nx, Ny, wl, sz, **kwargs) if method == 'Fresnel' else AngularSpectrum(Nx, Ny, wl, sz, **kwargs)
-
-    d0 = 0
-    recs = []
-    for dist in dists:
-        field = prop(field, dist - d0)
-        d0 = dist
-        recs.append(field)
-    return dists, recs
-
 
 class Propagate(DFT, ABC):
 
@@ -136,33 +47,20 @@ class Propagate(DFT, ABC):
 
         super().__init__((M, N), nb, threads=threads, dtype=dtype, ortho=False, **kwargs)
         self._Fx, self._Fy = freqspace(N, M, sz, nb)
-        self._k0 = 2 * np.pi / wl
+        self._wl = wl
         self._sz = sz
 
     def __call__(self, field, z):
-        if self._stacked:
-            assert field.shape[0] == len(z) == self.input_shape[0], \
-                f"{self.input_shape[0]} fields and distances must be provided."
+        if not isinstance(z, Iterable) and self._stacked:
+            z = np.array([z])
+        else:
+            z = np.array(z)
         Fh = self.forwards(field)
         return self.backwards(Fh * self.propagator(z))
 
     @abstractmethod
     def propagator(self, z):
         ...
-
-
-class Fresnel(Propagate):
-
-    def propagator(self, z):
-        """
-        :param z: Propagation distance.
-        :type z: float
-        :return: Fresnel field propagator.
-        :rtype: ndarray<complex>
-        """
-
-        kx, ky = 2 * np.pi * self._Fx, 2 * np.pi * self._Fy
-        return np.exp(1j * z * self._k0) * np.exp(-1j * z * (kx ** 2 + ky ** 2) / (2 * self._k0))
 
 
 class AngularSpectrum(Propagate):
@@ -175,8 +73,12 @@ class AngularSpectrum(Propagate):
         :rtype: ndarray<complex>
         """
 
-        kx, ky = 2 * np.pi * self._Fx, 2 * np.pi * self._Fy
-        kz = self._k0 - (kx ** 2 + ky ** 2) / (2 * self._k0)
-        return np.exp(1j * z * kz)
+        fx, fy = self._Fx, self._Fy
+        k0 = 2 * np.pi / self._wl
+        kz = k0 * np.sqrt((1 - (self._wl * fx)**2 - (self._wl * fy)**2))
 
+        if self._stacked:
+            return np.exp(1j * kz[None, :, :] * z[:, None, None])
+        else:
+            return np.exp(1j * kz * z)
 
