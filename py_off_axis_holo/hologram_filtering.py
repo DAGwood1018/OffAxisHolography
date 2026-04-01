@@ -200,7 +200,7 @@ class OffAxisFilter(DFT):
     def _optimize_tilt(self, freq, phase, method='TNC', cost='kqr', tol=1e-8, step=None, opts=None):
         logging.info("Aligning Mask to Inferred Tilt...")
         M, N = self._dims
-        X, Y = gridspace(N, M, 0, True)
+        X, Y = gridspace(M, N, 0, True)
 
         if self.masked:
             phase = crop_to_mask(phase, self._masks[0])
@@ -285,7 +285,7 @@ class OffAxisFilter(DFT):
 
     def construct_reference(self, f, M, N):
         tilt = self._calc_tilt(f)
-        X, Y = gridspace(N, M, 0, True)
+        X, Y = gridspace(M, N, 0, True)
         return ref_phase_shift((X, Y), tilt, self._k0, self._sz)
 
     def calibrate(self, fringes, mask_radius=None, optimize=True, visualize=False, **kwargs):

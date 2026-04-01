@@ -1,7 +1,7 @@
 import numpy as np
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from py_off_axis_holo.holography_helpers import freqspace
+from py_off_axis_holo.holography_helpers import gridspace
 from py_off_axis_holo.discrete_transforms import DFT
 
 
@@ -46,7 +46,8 @@ class Propagate(DFT, ABC):
         """
 
         super().__init__((M, N), nb, threads=threads, dtype=dtype, ortho=False, **kwargs)
-        self._Fx, self._Fy = freqspace(N, M, sz, nb)
+        X, Y = gridspace(M, N, nb, center=True)
+        self._Fx, self._Fy = X / (X.shape[1]*sz), Y / (Y.shape[0]*sz)
         self._wl = wl
         self._sz = sz
 

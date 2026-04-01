@@ -89,7 +89,7 @@ def crop_to_mask(a, mask):
     return a[m_min:m_max + 1, n_min:n_max + 1]
 
 
-def gridspace(N, M, nb=0, center=False):
+def gridspace(M, N, nb=0, center=False):
     """
     :param N, M: Shape of 2D arrays to operate on.
     :type N, M: int
@@ -102,28 +102,9 @@ def gridspace(N, M, nb=0, center=False):
     """
 
     nb = nb if nb > 0 else 0
-    dims = 2 * nb + np.array([N, M])
-    x = np.linspace(-0.5 * N, 0.5 * N, dims[0]) if center else np.linspace(0, N, dims[0])
-    y = np.linspace(-0.5 * M, 0.5 * M, dims[1]) if center else np.linspace(0, M, dims[1])
-    return np.meshgrid(x, y, indexing='xy')
-
-
-def freqspace(N, M, sz=1.0, nb=0):
-    """
-    :param N, M: Shape of 2D arrays to operate on.
-    :type N, M: int
-    :param sz: Pixel spacing.
-    :type sz: float
-    :param nb: Number of zeros to pad array dimensions by.
-    :type nb: int
-    :return: Meshgrids of X and Y.
-    :rtype: ndarray, ndarray
-    """
-
-    nb = nb if nb > 0 else 0
-    dims = 2 * nb + np.array([N, M])
-    x = np.fft.fftfreq(dims[0], d=sz)
-    y = np.fft.fftfreq(dims[1], d=sz)
+    dims = 2 * nb + np.array([M, N])
+    x = np.linspace(-0.5 * N, 0.5 * N, dims[1]) if center else np.linspace(0, N, dims[1])
+    y = np.linspace(-0.5 * M, 0.5 * M, dims[0]) if center else np.linspace(0, M, dims[0])
     return np.meshgrid(x, y, indexing='xy')
 
 
