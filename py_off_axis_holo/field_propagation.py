@@ -1,6 +1,5 @@
 import numpy as np
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
 from py_off_axis_holo.holography_helpers import gridspace
 from py_off_axis_holo.discrete_transforms import DFT
 
@@ -52,26 +51,11 @@ class Propagate(DFT, ABC):
         self._sz = sz
 
     def __call__(self, field, z):
-        if not self._stacked:
-            self.stack_arrays(1)
-        if np.ndim(field) == 3:
-            assert field.shape[0] == self.input_shape[0]
-        elif np.ndim(field) == 2:
-            field = np.stack([field] * self.input_shape[0])
-        else:
-            raise RuntimeError("Field has invalid dimension.")
-        if np.ndim(z) == 0:
-            z = np.array([z for _ in range(self.input_shape[0])])
-        elif np.ndim(z) == 1:
-            assert z.shape[0] == self.input_shape[0]
-        else:
-            raise RuntimeError("Invalid propagation distance(s).")
-
         Fh = self.forwards(field)
-        fieldz = self.backwards(Fh * self.propagator(z))
-        if self.input_shape[0] == 1:
-            return fieldz[0, :, :]
-        return fieldz
+        return self.backwards(Fh * self.propagator(z))
+
+    def stack_arrays(self, n):
+        return False
 
     @abstractmethod
     def propagator(self, zaxis):
@@ -91,4 +75,4 @@ class AngularSpectrum(Propagate):
         fx, fy = self._Fx, self._Fy
         k0 = 2 * np.pi / self._wl
         kz = k0 * np.sqrt((1 - (self._wl * fx)**2 - (self._wl * fy)**2))
-        return np.exp(1j * kz[None, :, :] * zaxis[:, None, None])
+        return np.exp(1j * kz * zaxis)
