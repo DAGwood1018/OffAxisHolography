@@ -36,10 +36,11 @@ class AutoFocusSearch:
     def _parallel_propagate(field, z, wl, sz, start, nb=0, threads=1):
         m, n = field.shape
         prop = AngularSpectrum(m, n, wl, sz, nb=nb, threads=threads)
-        prop.stack_arrays(len(z))
-        field = np.stack([field] * len(z))
-        prop_field = prop(field, z)
-        return start, AMP(prop_field)
+        results = []
+        for i in range(len(z)):
+            fieldz = prop(field, z[i])
+            results.append(AMP(fieldz))
+        return start, np.array(results)
 
     def parallel_search(self, field, zmin, zmax, wl, sz, nb=0, threads=1):
         zaxis = self._make_zaxis(zmin, zmax)
@@ -64,11 +65,8 @@ class AutoFocusSearch:
 
         m, n = field.shape
         prop = AngularSpectrum(m, n, wl, sz, nb=nb, threads=threads)
-        prop.stack_arrays(self.chunk_size)
-
-        stacked_field = np.stack([field] * self.chunk_size)
         for start, stop in self._chunk_indices(zmin, zmax):
-            fieldz = prop(stacked_field, zaxis[start:stop])
-            print(AMP(fieldz))
-            results[start:stop] = AMP(fieldz)
+            for i in range(start, stop):
+                fieldz = prop(field, zaxis[i])
+                results[i] = AMP(fieldz)
         return zaxis, results

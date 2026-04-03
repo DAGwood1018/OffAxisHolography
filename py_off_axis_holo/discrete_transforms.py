@@ -3,6 +3,7 @@ import numpy as np
 
 from py_off_axis_holo.holography_helpers import pad_arr, unpad_arr
 
+BUILD_FLAGS = ('FFTW_MEASURE',)
 
 def fft(a):
     """
@@ -60,7 +61,7 @@ def idct(b):
     return transform(b)
 
 
-def FFT(dims, threads=1, dtype='complex128', flags=('FFTW_MEASURE',)):
+def FFT(dims, threads=1, dtype='complex128', flags=BUILD_FLAGS):
     """
     Initialize fast fourier transform.
 
@@ -79,7 +80,7 @@ def FFT(dims, threads=1, dtype='complex128', flags=('FFTW_MEASURE',)):
     return DiscreteTransform(dims, 'FFTW_FORWARD', dtype=dtype, threads=threads, flags=flags)
 
 
-def IFFT(dims, threads=1, dtype='complex128', flags=('FFTW_MEASURE',)):
+def IFFT(dims, threads=1, dtype='complex128', flags=BUILD_FLAGS):
     """
     Initialize inverse fast fourier transform.
 
@@ -98,7 +99,7 @@ def IFFT(dims, threads=1, dtype='complex128', flags=('FFTW_MEASURE',)):
     return DiscreteTransform(dims, 'FFTW_BACKWARD', dtype=dtype, threads=threads, flags=flags)
 
 
-def DCT(dims, threads=1, dtype='float64', flags=('FFTW_MEASURE',)):
+def DCT(dims, threads=1, dtype='float64', flags=BUILD_FLAGS):
     """
     Initialize discrete cosine transform.
 
@@ -117,7 +118,7 @@ def DCT(dims, threads=1, dtype='float64', flags=('FFTW_MEASURE',)):
     return DiscreteTransform(dims, 'FFTW_REDFT10', dtype=dtype, threads=threads, flags=flags)
 
 
-def IDCT(dims, threads=1, dtype='float64', flags=('FFTW_MEASURE',)):
+def IDCT(dims, threads=1, dtype='float64', flags=BUILD_FLAGS):
     """
     Initialize inverse discrete cosine transform.
 
@@ -138,7 +139,7 @@ def IDCT(dims, threads=1, dtype='float64', flags=('FFTW_MEASURE',)):
 
 class DiscreteTransform:
 
-    def __init__(self, dims, direction, dtype, threads=1, nstack=0, flags=('FFTW_MEASURE',)):
+    def __init__(self, dims, direction, dtype, threads=1, nstack=0, flags=BUILD_FLAGS):
         """
         Abstract class for defining discrete transforms.
 
@@ -183,7 +184,7 @@ class DiscreteTransform:
         b[:] = self._transform(**kwargs)
         return b
 
-    def _build(self, dims, nstack=1, flags=('FFTW_MEASURE',)):
+    def _build(self, dims, nstack=1, flags=BUILD_FLAGS):
         """
         Setup FFTW object.
 
@@ -287,7 +288,7 @@ class DiscreteTransform:
 
 class DFT:
 
-    def __init__(self, dims, nb=0, threads=1, ortho=False, re=False, dtype='complex128', flags=('FFTW_MEASURE',)):
+    def __init__(self, dims, nb=0, threads=1, ortho=False, re=False, dtype='complex128', flags=BUILD_FLAGS):
         """
         Class for performing discrete fourier transforms.
 
@@ -408,6 +409,7 @@ class DFT:
     def stack_arrays(self, n):
         """
         Adds another dimension that is not transformed allowing for multiple arrays to be processed at once.
+        However, order will not be preserved.
 
         :param n: How many arrays you want to process.
         :type n: int
