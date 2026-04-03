@@ -207,7 +207,7 @@ class DiscreteTransform:
         :param aligned_input: Whether given arrays have been properly aligned in memory. Default is 'True'.
         :type aligned_input: bool
         :param overwrite_input: Whether the allocated arrays in memory can be overwritten which may provide some speed up.
-        Default is 'True'.
+        Default is 'False'.
         :type overwrite_input: bool
         :return: tuple<string>
         """
@@ -406,6 +406,9 @@ class DFT:
         :return: bool
         """
 
+        assert isinstance(n, int), "n must be an integer."
+        if n<=0:
+            return False
         if self._stacked:
             self.unstack_arrays()
 
@@ -413,7 +416,7 @@ class DFT:
         dims_in, dims_out = [n], [n]
         dims_in.extend(list(self.input_shape))
         axes_in = tuple(i for i in range(1, len(dims_in)))
-        dims_out.extend(list(self.input_shape))
+        dims_out.extend(list(self.output_shape))
         axes_out = tuple(i for i in range(1, len(dims_out)))
 
         self._fft = self._fft.refactor(dims_in, axes=axes_in)

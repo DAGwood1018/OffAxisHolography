@@ -52,24 +52,38 @@ class Propagate(DFT, ABC):
         self._sz = sz
 
     def __call__(self, field, z):
-        if not isinstance(z, Iterable) and self._stacked:
-            z = np.array([z])
+        if not self._stacked:
+            self.stack_arrays(1)
+        if np.ndim(field) == 3:
+            assert field.shape[0] == self.input_shape[0]
+        elif np.ndim(field) == 2:
+            field = np.stack([field] * self.input_shape[0])
         else:
-            z = np.array(z)
+            raise RuntimeError("Field has invalid dimension.")
+        if np.ndim(z) == 0:
+            z = np.array([z for _ in range(self.input_shape[0])])
+        elif np.ndim(z) == 1:
+            assert z.shape[0] == self.input_shape[0]
+        else:
+            raise RuntimeError("Invalid propagation distance(s).")
+
         Fh = self.forwards(field)
-        return self.backwards(Fh * self.propagator(z))
+        fieldz = self.backwards(Fh * self.propagator(z))
+        if self.input_shape[0] == 1:
+            return fieldz[0, :, :]
+        return fieldz
 
     @abstractmethod
-    def propagator(self, z):
+    def propagator(self, zaxis):
         ...
 
 
 class AngularSpectrum(Propagate):
 
-    def propagator(self, z):
+    def propagator(self, zaxis):
         """
-        :param z: Propagation distance.
-        :type z: float
+        :param zaxis: Propagation distances.
+        :type zaxis: ndarray
         :return: Angular spectrum field propagator.
         :rtype: ndarray<complex>
         """
@@ -77,9 +91,4 @@ class AngularSpectrum(Propagate):
         fx, fy = self._Fx, self._Fy
         k0 = 2 * np.pi / self._wl
         kz = k0 * np.sqrt((1 - (self._wl * fx)**2 - (self._wl * fy)**2))
-
-        if self._stacked:
-            return np.exp(1j * kz[None, :, :] * z[:, None, None])
-        else:
-            return np.exp(1j * kz * z)
-
+        return np.exp(1j * kz[None, :, :] * zaxis[:, None, None])

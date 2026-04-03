@@ -1,34 +1,34 @@
 import numpy as np
+from warnings import warn
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
 
 from py_off_axis_holo.field_propagation import AngularSpectrum
 
 def AMP(field):
-    if len(field.shape) < 2:
-        return np.sum(np.abs(field))
-    return np.sum(np.sum(np.sqrt(np.abs(field)), axis=-1), axis=-1)
+    if np.ndim(field) == 2:
+        return np.sum(np.sqrt(np.abs(field)), axis=(0, 1))
+    elif np.ndim(field) == 3:
+        return np.sum(np.sqrt(np.abs(field)), axis=(1, 2))
+    else:
+        warn("Invalid field shape.")
+        return None
 
 class AutoFocusSearch:
-    def __init__(self, num_workers=None, chunk_size=None):
-        """
-        num_workers : number of processes
-        chunk_size  : size of chunks
-        """
+    def __init__(self, chunk_size, num_chunks=1, num_workers=None):
+        assert num_chunks > 0, "There must be at least 1 chunk."
+        assert chunk_size > 0, "Chunk size must be at least 1."
 
         self.num_workers = num_workers or os.cpu_count()
-        self.chunk_size = chunk_size or None
+        self.num_chunks = num_chunks
+        self.chunk_size = chunk_size
 
-    def __call__(self, field, zaxis, wl, sz, nb=0, threads=1):
-        if self.chunk_size is None:
-            self.chunk_size = self._auto_chunk_size(zaxis)
-        return self.compute(field, zaxis, wl, sz, nb=nb, threads=threads)
+    def _make_zaxis(self, zmin, zmax):
+        n = self.chunk_size * self.num_chunks
+        return np.linspace(zmin, zmax, n, endpoint=False)
 
-    def _auto_chunk_size(self, zaxis):
-        n = len(zaxis)
-        return max(1, n // (self.num_workers * 2))
-
-    def _chunk_indices(self, zaxis):
+    def _chunk_indices(self, zmin, zmax):
+        zaxis = self._make_zaxis(zmin, zmax)
         for i in range(0, len(zaxis), self.chunk_size):
             yield i, i + self.chunk_size
 
@@ -36,28 +36,39 @@ class AutoFocusSearch:
     def _parallel_propagate(field, z, wl, sz, start, nb=0, threads=1):
         m, n = field.shape
         prop = AngularSpectrum(m, n, wl, sz, nb=nb, threads=threads)
-        if not isinstance(z, (int, float)):
-            if len(z) > 1:
-                prop.stack_arrays(len(z))
-                field = np.stack([field] * len(z))
-
+        prop.stack_arrays(len(z))
+        field = np.stack([field] * len(z))
         prop_field = prop(field, z)
         return start, AMP(prop_field)
 
-    def compute(self, field, zaxis, wl, sz, nb=0, threads=1):
-        results = np.empty_like(zaxis, dtype=float)
-        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
-            futures = []
-            for start, end in self._chunk_indices(zaxis):
-                z = zaxis[start:end]
-                futures.append(
-                    executor.submit(self._parallel_propagate,
-                        field, z, wl, sz, start,
-                        nb=nb, threads=threads
-                    )
-                )
+    def parallel_search(self, field, zmin, zmax, wl, sz, nb=0, threads=1):
+        zaxis = self._make_zaxis(zmin, zmax)
+        results = np.empty(self.num_chunks*self.chunk_size, dtype=float)
+        chunks = list(self._chunk_indices(zmin, zmax))
 
-            for future in as_completed(futures):
-                start, chunk_result = future.result()
-                results[start:start + len(chunk_result)] = chunk_result
+        def task(args):
+            start, end = args
+            z = zaxis[start:end]
+            if self.chunk_size == 1:
+                z = np.array([z])
+            return self._parallel_propagate(field, z, wl, sz, start, nb, threads)
+
+        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+            for start, chunk_result in executor.map(task, chunks):
+                results[start:start + self.chunk_size] = chunk_result
+        return zaxis, results
+
+    def serial_search(self, field, zmin, zmax, wl, sz, nb=0, threads=1):
+        zaxis = self._make_zaxis(zmin, zmax)
+        results = np.empty(self.num_chunks * self.chunk_size, dtype=float)
+
+        m, n = field.shape
+        prop = AngularSpectrum(m, n, wl, sz, nb=nb, threads=threads)
+        prop.stack_arrays(self.chunk_size)
+
+        stacked_field = np.stack([field] * self.chunk_size)
+        for start, stop in self._chunk_indices(zmin, zmax):
+            fieldz = prop(stacked_field, zaxis[start:stop])
+            print(AMP(fieldz))
+            results[start:stop] = AMP(fieldz)
         return zaxis, results
