@@ -4,7 +4,7 @@ import cv2
 
 from scipy.optimize import minimize
 from skimage.feature import peak_local_max
-from py_off_axis_holo.discrete_transforms import DFT
+from py_off_axis_holo.discrete_transforms import DFT, DiscreteTransform
 from py_off_axis_holo.holography_helpers import ref_phase_shift, gridspace, format_holo, crop_to_mask, unpad_arr
 from warnings import warn
 
@@ -97,7 +97,7 @@ class OffAxisFilter(DFT):
         self._filter_radius = None
         self._filter_center = None
         self._sqr_masks = sqr_masks
-        self._window = np.ones(self._dims)
+        self._window = np.ones(self.input_shape)
 
     def __call__(self, fringes, only_crop_to_mask=False, self_RCH=False, RCH_r_factor=0.1):
         if not self.masked:
@@ -126,9 +126,6 @@ class OffAxisFilter(DFT):
             Fh *= np.stack([self._masks[1] for _ in range(self.input_shape[0])]) if self._stacked else self._masks[1]
             Fh = self.crop_to_mask(Fh, self._masks[1])
 
-        if tuple(self.output_shape) != tuple(Fh.shape):
-            axes = (1, 2) if self._stacked else None
-            self._ifft.refactor(Fh.shape, axes=axes)
         field = self.backwards(Fh)
         if self_RCH:
             RCH_field = self.backwards(RCH)
@@ -225,10 +222,21 @@ class OffAxisFilter(DFT):
         logging.info("Optimization Routine Complete.")
         return np.array(res.x)
 
+    def _crop_back_transform(self, dims, nstack):
+        threads = self._ifft.threads
+        dtype = self._ifft.dtype
+        flags = self._ifft.flags
+        out_dir = self._ifft.direction
+        self._ifft = DiscreteTransform(dims, out_dir, dtype, threads=threads, nstack=nstack, flags=flags)
+
     def crop_to_mask(self, a, mask):
         coords = np.argwhere(mask)
         m_min, n_min = coords.min(axis=0)
         m_max, n_max = coords.max(axis=0)
+
+        dims = [m_max+1-m_min, n_max+1-n_min]
+        nstack = a.shape[0] if self._stacked else 0
+        self._crop_back_transform(dims, nstack)
         return a[:, m_min:m_max + 1, n_min:n_max + 1] if self._stacked else a[m_min:m_max + 1, n_min:n_max + 1]
 
     def _visualize_roi(self, fringes):
@@ -345,11 +353,16 @@ class OffAxisFilter(DFT):
         return f10
 
     def reset(self):
-        self.unstack_arrays()
+        dims = self.input_shape[1:] if self._stacked else self._dims
         self._masks = None
         self._ref_wave = None
-        self._window = np.ones(self._dims)
-        self._ifft.refactor(self.input_shape)
+        self._window = np.ones(dims)
+        self._stacked = False
+
+        self._fft = DiscreteTransform(dims, self._fft.direction, self._fft.dtype, threads=self._fft.threads,
+                                      nstack=0, flags=self._ifft.flags)
+        self._ifft = DiscreteTransform(dims, self._ifft.direction, self._ifft.dtype, threads=self._ifft.threads,
+                                       nstack=0, flags=self._ifft.flags)
         return self
 
 

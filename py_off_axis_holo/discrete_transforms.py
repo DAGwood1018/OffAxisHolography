@@ -1,69 +1,66 @@
 import pyfftw
 import numpy as np
+
 from py_off_axis_holo.holography_helpers import pad_arr, unpad_arr
 
 
-def fft(a, **kwargs):
+def fft(a):
     """
     Perform Fourier transform.
 
     :param a: Array to transform.
     :type a: ndarray<complex>
-    :param kwargs: Optional arguments of DiscreteTransform class
     :return: FFT of a.
     :rtype: ndarray<complex>
     """
 
-    transform = FFT(a.shape, **kwargs)
+    transform = FFT(a.shape)
     return transform(a)
 
 
-def ifft(b, **kwargs):
+def ifft(b):
     """
     Perform inverse Fourier transform.
 
     :param b: Array to transform.
     :type b: ndarray<complex>
-    :param kwargs: Optional arguments of DiscreteTransform class
     :return: IFFT of b.
     :rtype: ndarray<complex>
     """
 
-    transform = IFFT(b.shape, **kwargs)
+    transform = IFFT(b.shape)
     return transform(b)
 
 
-def dct(a, **kwargs):
+def dct(a):
     """
     Perform discrete cosine transform.
 
     :param a: Array to transform.
     :type a: ndarray<float>
-    :param kwargs: Optional arguments of DiscreteTransform class
     :return: DCT of a.
     :rtype: ndarray<float>
     """
 
-    transform = DCT(a.shape, **kwargs)
+    transform = DCT(a.shape)
     return transform(a)
 
 
-def idct(b, **kwargs):
+def idct(b):
     """
     Perform inverse discrete cosine transform.
 
     :param b: Array to transform.
     :type b: ndarray<float>
-    :param kwargs: Optional arguments of DiscreteTransform class
     :return: IDCT of b.
     :rtype: ndarray<float>
     """
 
-    transform = IDCT(b.shape, **kwargs)
+    transform = IDCT(b.shape)
     return transform(b)
 
 
-def FFT(dims, threads=1, dtype='complex128', **kwargs):
+def FFT(dims, threads=1, dtype='complex128', flags=('FFTW_MEASURE',)):
     """
     Initialize fast fourier transform.
 
@@ -73,15 +70,16 @@ def FFT(dims, threads=1, dtype='complex128', **kwargs):
     :type threads: int
     :param dtype: Numpy dtype of arrays to operate on. Default is 'complex128'.
     :type dtype: string
-    :param kwargs: Additional parameters for pyfftw.FFTW().
+    :param flags: Flags for transform builder.
+    :type flags: tuple<str>
     """
 
     if dtype != 'complex128' and dtype != 'complex64':
         dtype = 'complex128'
-    return DiscreteTransform(dims, 'FFTW_FORWARD', dtype, threads, **kwargs)
+    return DiscreteTransform(dims, 'FFTW_FORWARD', dtype=dtype, threads=threads, flags=flags)
 
 
-def IFFT(dims, threads=1, dtype='complex128', **kwargs):
+def IFFT(dims, threads=1, dtype='complex128', flags=('FFTW_MEASURE',)):
     """
     Initialize inverse fast fourier transform.
 
@@ -91,15 +89,16 @@ def IFFT(dims, threads=1, dtype='complex128', **kwargs):
     :type threads: int
     :param dtype: Numpy dtype of arrays to operate on. Default is 'complex128'.
     :type dtype: string
-    :param kwargs: Additional parameters for pyfftw.FFTW().
+    :param flags: Flags for transform builder.
+    :type flags: tuple<str>
     """
 
     if dtype != 'complex128' and dtype != 'complex64':
         dtype = 'complex128'
-    return DiscreteTransform(dims, 'FFTW_BACKWARD', dtype, threads, **kwargs)
+    return DiscreteTransform(dims, 'FFTW_BACKWARD', dtype=dtype, threads=threads, flags=flags)
 
 
-def DCT(dims, threads=1, dtype='float64', **kwargs):
+def DCT(dims, threads=1, dtype='float64', flags=('FFTW_MEASURE',)):
     """
     Initialize discrete cosine transform.
 
@@ -109,15 +108,16 @@ def DCT(dims, threads=1, dtype='float64', **kwargs):
     :type threads: int
     :param dtype: Numpy dtype of arrays to operate on. Default is 'float64'.
     :type dtype: string
-    :param kwargs: Additional flags for pyfftw.FFTW().
+    :param flags: Flags for transform builder.
+    :type flags: tuple<str>
     """
 
     if dtype != 'float64' and dtype != 'float32':
         dtype = 'float64'
-    return DiscreteTransform(dims, 'FFTW_REDFT10', dtype, threads, **kwargs)
+    return DiscreteTransform(dims, 'FFTW_REDFT10', dtype=dtype, threads=threads, flags=flags)
 
 
-def IDCT(dims, threads=1, dtype='float64', **kwargs):
+def IDCT(dims, threads=1, dtype='float64', flags=('FFTW_MEASURE',)):
     """
     Initialize inverse discrete cosine transform.
 
@@ -127,17 +127,18 @@ def IDCT(dims, threads=1, dtype='float64', **kwargs):
     :type threads: int
     :param dtype: Numpy dtype of arrays to operate on. Default is 'float64'.
     :type dtype: string
-    :param kwargs: Additional flags for pyfftw.FFTW().
+    :param flags: Flags for transform builder.
+    :type flags: tuple<str>
     """
 
     if dtype != 'float64' and dtype != 'float32':
         dtype = 'float64'
-    return DiscreteTransform(dims, 'FFTW_REDFT01', dtype, threads, **kwargs)
+    return DiscreteTransform(dims, 'FFTW_REDFT01', dtype=dtype, threads=threads, flags=flags)
 
 
 class DiscreteTransform:
 
-    def __init__(self, dims, direction, dtype, threads=1, **kwargs):
+    def __init__(self, dims, direction, dtype, threads=1, nstack=0, flags=('FFTW_MEASURE',)):
         """
         Abstract class for defining discrete transforms.
 
@@ -149,20 +150,28 @@ class DiscreteTransform:
         :type dtype: string
         :param threads: Number of threads to use. Default is 1.
         :type threads: int
-        :param kwargs: Additional parameters for transform builder.
+        :param nstack: Number of arrays to simultaneously process. Default is 0.
+        :type nstack: int
+        :param flags: Flags for transform builder.
+        :type flags: tuple<str>
         """
+
+        assert isinstance(threads, int) and threads >= 1, "Number of threads must be an integer >= 1."
+        assert isinstance(nstack, int) and nstack >= 0, "Number of stacked arrays must be an integer >= 0."
+        assert np.ndim(dims) == 1, "Dimensions must given as a 1D array."
 
         self._dtype = dtype
         self._threads = threads
         self._dir = direction
-        self._transform = self._build(dims, self._parse_flags(**kwargs))
+        self._nstack = nstack
+        self._transform = self._build(dims, nstack=nstack, flags=flags)
 
     def __call__(self, a, **kwargs):
         """
         Performs an N dimensional transform on an array.
 
-        :param a: Array to transform.  Can be a list of arrays if you want to stack them.
-        :type a: ndarray<dtype>, list<ndarray>
+        :param a: Array to transform. Can be a stacked ndarray.
+        :type a: ndarray<dtype>
         :return: Transform of a.
         :rtype: ndarray<dtype>
         """
@@ -174,55 +183,34 @@ class DiscreteTransform:
         b[:] = self._transform(**kwargs)
         return b
 
-    def _build(self, dims, flags=None, axes=None):
+    def _build(self, dims, nstack=1, flags=('FFTW_MEASURE',)):
         """
         Setup FFTW object.
 
         :param dims: Dimension of ndarray to operate on.
         :type dims: list<int>
-        :param flags: Additional flags for pyfftw.FFTW().
-        :type flags: list
-        :param axes: What axes to transform.
-        :type axes: tuple<int>, None
+        :param nstack: Number of arrays to simultaneously process. Default is 1.
+        :type nstack: int
+        :param flags: Flags for transform builder.
+        :type flags: tuple<str>
         :return: a pyFFTW FFTW object.
         """
 
+        if nstack == 0:
+            dims = np.round(np.array(dims)).astype(int)
+            axes = tuple(i for i in range(len(dims)))
+        else:
+            stacked_dims = [nstack]
+            stacked_dims.extend(list(dims))
+            dims = np.round(np.array(stacked_dims)).astype(int)
+            axes = tuple(i for i in range(1, len(dims)))
+
         flags = () if flags is None else flags
-        dims = np.round(np.array(dims)).astype(int)
         a = pyfftw.empty_aligned(dims, dtype=self._dtype)
         b = pyfftw.empty_aligned(dims, dtype=self._dtype)
-        axes = tuple(i for i in range(len(dims))) if axes is None else axes
         directions = np.repeat(self._dir, len(axes))
         return pyfftw.FFTW(a, b, threads=self._threads, axes=axes,
                            direction=directions, flags=flags)
-
-    @classmethod
-    def _parse_flags(cls, planner_effort='FFTW_MEASURE', aligned_input=True, overwrite_input=False):
-        """
-        Parses flags used by FFTW to perform transformations. See FFTW documentation for more info.
-
-        :param planner_effort: Determines amount of planning done beforehand to speed of transforms.
-        Options are FFT_{ESTIMATE, MEASURE, PATIENT, EXHAUSTIVE} from least to most effort. Default is 'FFTW_MEASURE'.
-        :type planner_effort: string
-        :param aligned_input: Whether given arrays have been properly aligned in memory. Default is 'True'.
-        :type aligned_input: bool
-        :param overwrite_input: Whether the allocated arrays in memory can be overwritten which may provide some speed up.
-        Default is 'False'.
-        :type overwrite_input: bool
-        :return: tuple<string>
-        """
-
-        flags = ()
-        plan_opts = ['FFTW_ESTIMATE', 'FFTW_MEASURE', 'FFTW_PATIENT', 'FFTW_EXHAUSTIVE']
-        if planner_effort in plan_opts:
-            flags += (planner_effort,)
-        else:
-            flags += ('FFTW_MEASURE',)
-        if overwrite_input:
-            flags += ('FFTW_DESTROY_INPUT',)
-        if not aligned_input:
-            flags += ('FFTW_UNALIGNED',)
-        return flags
 
     @property
     def shape(self):
@@ -232,6 +220,16 @@ class DiscreteTransform:
         """
 
         return np.array(self.input.shape)
+
+    @property
+    def dtype(self):
+        """
+        :return: The dtype of the input and output arrays.
+        :rtype: dtype
+        """
+
+        return self._dtype
+
 
     @property
     def flags(self):
@@ -260,27 +258,36 @@ class DiscreteTransform:
 
         return self._transform.output_array
 
-    def refactor(self, dims, flags=None, axes=None):
+    @property
+    def threads(self):
         """
-        Recreate FFTW for a new size.
-
-        :param dims: New dimension of ndarray to operate on.
-        :type dims: list<int>
-        :param flags: Additional flags for pyfftw.FFTW().
-        :type flags: list
-        :param axes: What axes to transform.
-        :type axes: tuple<int>, None
-        :return: DiscreteTransform
+        :return: Number of threads used.
+        :rtype: int
         """
 
-        flags = self.flags if flags is None else flags
-        self._transform = self._build(dims, flags=flags, axes=axes)
-        return self
+        return self._threads
 
+    @property
+    def nstack(self):
+        """
+        :return: Number of stacked ndarrays.
+        :rtype: int
+        """
+
+        return self._nstack
+
+    @property
+    def direction(self):
+        """
+        :return: Transform direction.
+        :rtype: str
+        """
+
+        return self._dir
 
 class DFT:
 
-    def __init__(self, dims, nb=0, threads=1, ortho=False, re=False, dtype='complex128', **kwargs):
+    def __init__(self, dims, nb=0, threads=1, ortho=False, re=False, dtype='complex128', flags=('FFTW_MEASURE',)):
         """
         Class for performing discrete fourier transforms.
 
@@ -296,7 +303,8 @@ class DFT:
         :type re: bool
         :param dtype: Numpy dtype (complex) of arrays to operate on. Default is 'complex128'.
         :type dtype: string
-        :param kwargs: Optional arguments for DiscreteTransform object.
+        :param flags: Flags for transform builder.
+        :type flags: tuple<str>
         """
 
         assert type(nb) is int, "Padding must be given as an integer."
@@ -307,10 +315,10 @@ class DFT:
         self._nb = nb
         self._ortho = ortho
         self._stacked = False
-        self._fft = FFT(padded_shape, threads=threads, dtype=dtype, **kwargs) if not re else \
-            DCT(padded_shape, threads=threads, dtype=dtype, **kwargs)
-        self._ifft = IFFT(padded_shape, threads=threads, dtype=dtype, **kwargs) if not re else \
-            IDCT(padded_shape, threads=threads, dtype=dtype, **kwargs)
+        self._fft = FFT(padded_shape, threads=threads, dtype=dtype, flags=flags) if not re else \
+            DCT(padded_shape, threads=threads, dtype=dtype, flags=flags)
+        self._ifft = IFFT(padded_shape, threads=threads, dtype=dtype, flags=flags) if not re else \
+            IDCT(padded_shape, threads=threads, dtype=dtype, flags=flags)
 
     @property
     def input_shape(self):
@@ -406,21 +414,19 @@ class DFT:
         :return: bool
         """
 
-        assert isinstance(n, int), "n must be an integer."
-        if n<=0:
+        if n<=0 or not isinstance(n, int):
             return False
         if self._stacked:
             self.unstack_arrays()
 
         self._stacked = True
-        dims_in, dims_out = [n], [n]
-        dims_in.extend(list(self.input_shape))
-        axes_in = tuple(i for i in range(1, len(dims_in)))
-        dims_out.extend(list(self.output_shape))
-        axes_out = tuple(i for i in range(1, len(dims_out)))
+        dims_in, dims_out = self.input_shape, self.output_shape
+        in_dir, out_dir = self._fft.direction, self._ifft.direction
 
-        self._fft = self._fft.refactor(dims_in, axes=axes_in)
-        self._ifft = self._ifft.refactor(dims_out, axes=axes_out)
+        self._fft = DiscreteTransform(dims_in, in_dir, self._fft.dtype,
+                                      threads=self._fft.threads, nstack=n, flags=self._fft.flags)
+        self._ifft = DiscreteTransform(dims_out, out_dir, self._ifft.dtype,
+                                       threads=self._ifft.threads, nstack=n, flags=self._ifft.flags)
         return True
 
     def unstack_arrays(self):
@@ -434,10 +440,13 @@ class DFT:
             return False
 
         self._stacked = False
-        dims_in = self.input_shape[1:]
-        dims_out = self.output_shape[1:]
-        self._fft = self._fft.refactor(dims_in)
-        self._ifft = self._ifft.refactor(dims_out)
+        dims_in, dims_out= self.input_shape[1:], self.output_shape[1:]
+        in_dir, out_dir = self._fft.direction, self._ifft.direction
+
+        self._fft = DiscreteTransform(dims_in, in_dir, self._fft.dtype,
+                                      threads=self._fft.threads, nstack=0, flags=self._fft.flags)
+        self._ifft = DiscreteTransform(dims_out, out_dir, self._ifft.dtype,
+                                       threads=self._ifft.threads, nstack=0, flags=self._ifft.flags)
         return True
 
 
