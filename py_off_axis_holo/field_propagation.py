@@ -64,15 +64,15 @@ class Propagate(DFT, ABC):
 
 class AngularSpectrum(Propagate):
 
-    def propagator(self, zaxis):
+    def propagator(self, z):
         """
-        :param zaxis: Propagation distances.
-        :type zaxis: ndarray
+        :param z: Propagation distance.
+        :type z: float
         :return: Angular spectrum field propagator.
-        :rtype: ndarray<complex>
+        :rtype: complex
         """
 
         fx, fy = self._Fx, self._Fy
         k0 = 2 * np.pi / self._wl
         kz = k0 * np.sqrt((1 - (self._wl * fx)**2 - (self._wl * fy)**2))
-        return np.exp(1j * kz * zaxis)
+        return np.exp(1j * kz * z)
