@@ -86,14 +86,15 @@ class AutoFocusSearch:
         self._type = field_type.lower()
         self._dz = 0
 
-    def __call__(self, field, zmin, zmax, wl, sz, threads=1, width=10e-3, **kwargs):
+    def __call__(self, field, zmin, zmax, wl, sz, threads=1, **kwargs):
         zaxis, results, poi = self.broad_search(field, zmin, zmax, wl, sz, threads=threads)
         phase_only = True if self._type == 'phase' else False
         potential_extrema, scores = [], []
+        width = self.chunk_size * self._dz / 2
         for p in poi:
             if p is not None:
                 z0 = zaxis[p]
-                potential_extreme, score = golden_section_search(field, z0 - width, z0 + width, wl, sz,
+                potential_extreme, score = golden_section_search(field, z0 - width / 2, z0 + width / 2, wl, sz,
                                                                        threads=threads, phase_only=phase_only, **kwargs)
                 potential_extrema.append(potential_extreme)
                 scores.append(score)
