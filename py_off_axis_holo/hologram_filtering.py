@@ -100,8 +100,19 @@ class OffAxisFilter(DFT):
         self._window = np.ones(self.input_shape)
 
     def __call__(self, fringes, only_crop_to_mask=False, self_RCH=False, RCH_r_factor=0.1):
+        """
+        :param fringes: Interferogram corresponding to an off-axis hologram
+        :type fringes: ndarray
+        :param only_crop_to_mask: If True the field is not multiplied by a reference wave.
+        :param self_RCH: If True the reference conjugate hologram is applied.
+        :param RCH_r_factor: Percentage of filter radius to use as radius of maskk used to extrac the RCH.
+        :return: The +/-1 (off-axis) term of the hologram
+        :rtype: ndarray
+        """
+
         if not self.masked:
             self.calibrate(fringes)
+        assert 0 < RCH_r_factor < 1.0, "This parameter is a percentage and must be between 0 and 1."
 
         if only_crop_to_mask is None:
             Fh = self.forwards(fringes)
@@ -137,6 +148,22 @@ class OffAxisFilter(DFT):
         if self._masks is None:
             return False
         return True
+
+    def filter_dc(self, fringes):
+        """
+        :param fringes: Interferogram corresponding to an off-axis hologram
+        :type fringes: ndarray
+        :return: The DC term of the hologram
+        :rtype: ndarray
+        """
+
+        if not self.masked:
+            self.calibrate(fringes)
+
+        Fh = self.forwards(fringes)
+        Fh *= np.stack([self._masks[1] for _ in range(self.input_shape[0])]) if self._stacked else self._masks[1]
+        Fh = self.crop_to_mask(Fh, self._masks[1])
+        return self.backwards(Fh)
 
     def _calc_tilt(self, f):
         """
