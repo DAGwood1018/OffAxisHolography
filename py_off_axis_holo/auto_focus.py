@@ -5,24 +5,57 @@ import os
 
 from py_off_axis_holo.field_propagation import AngularSpectrum
 
+#TODO the logic of this search method is currently flawed I am missing the absolute min in my test case.
 
 def AMP(field):
     """
-    Maximized for pure amplitude, minimized for pure phase
-
-    :param field: ndarray of light field
-    :return: AMP measure of field
+    :param field: Complex field.
+    :return: AMP measure of field. Minimized for pure amplitude, maximized for pure phase
+    :rtype: float
     """
 
     if np.ndim(field) == 2:
         return np.sum(np.sqrt(np.abs(field)), axis=(0, 1))
-    elif np.ndim(field) == 3:
-        return np.sum(np.sqrt(np.abs(field)), axis=(1, 2))
     else:
-        warn("Invalid field shape.")
+        warn("Invalid field dim.")
         return None
 
-def parallel_propagate(field, z, wl, sz, dz, start, threads=1, phase_only=False):
+def SPEC(field):
+    """
+    :param field: Complex field.
+    :return: Score related to how in-focus the image is. Maximized for pure amplitude, minimized for pure phase.
+    :rtype: float
+    """
+
+    if np.ndim(field) == 2:
+        U = np.fft.fftshift(np.fft.fft2(field))
+        return np.sum(np.log(1 + np.abs(U)), axis=(0,1)) / U.size
+    else:
+        warn("Invalid field dim.")
+        return None
+
+def EIG(field, alpha=0):
+    """
+    :param field: Complex field.
+    :param alpha: Percentage of eigenvalues to throw out. Only necessary if magnification isn't fixed (lensless).
+    :return: Score related to how in-focus the image is. Maximized for pure amplitude, minimized for pure phase.
+    :rtype: float
+    """
+
+    if np.ndim(field) == 2:
+        u = np.abs(field)
+        N = np.sqrt(np.sum(u**2, axis=(0,1)))
+        U = u / N
+        mu = np.mean(U, axis=(0, 1))
+        G = U - mu
+        eigvals = np.linalg.eigvalsh(G @ G.T)
+        kappa = np.floor(alpha*len(eigvals))
+        return np.sum(eigvals[0:-kappa])
+    else:
+        warn("Invalid field dim.")
+        return None
+
+def parallel_propagate(field, z, wl, sz, dz, start, threads=1, maximize=False):
     m, n = field.shape
     prop = AngularSpectrum(m, n, wl, sz, nb=0, threads=threads)
     score, peaks, z_int = [], [], [z[0] - dz]
@@ -31,7 +64,7 @@ def parallel_propagate(field, z, wl, sz, dz, start, threads=1, phase_only=False)
     z_int.append(z_int[-1] + dz)
     for i in range(len(z_int)):
         fieldz = prop(field, z_int[i])
-        score.append(-AMP(fieldz)) if phase_only else score.append(AMP(fieldz))
+        score.append(-SPEC(fieldz)) if maximize else score.append(SPEC(fieldz))
 
     min_point = np.argmin(score[1:-1])
     if score[min_point] < score[min_point + 1] and score[min_point] < score[min_point - 1]:
@@ -40,7 +73,7 @@ def parallel_propagate(field, z, wl, sz, dz, start, threads=1, phase_only=False)
         poi = None
     return start, np.array(score)[1:-1], poi
 
-def golden_section_search(field, z_a, z_b, wl, sz, threads=1, tol=1e-5, max_iter=1000, phase_only=False):
+def golden_section_search(field, z_a, z_b, wl, sz, threads=1, tol=1e-5, max_iter=1000, maximize=False):
     phi = (1 + np.sqrt(5)) / 2  # golden ratio
     resphi = 2 - phi  # 1/phi^2
 
@@ -50,8 +83,8 @@ def golden_section_search(field, z_a, z_b, wl, sz, threads=1, tol=1e-5, max_iter
     z_d = z_b - resphi * (z_b - z_a)
 
     iters = 0
-    fc, fd = AMP(prop(field, z_c)), AMP(prop(field, z_d))
-    if phase_only:
+    fc, fd = SPEC(prop(field, z_c)), SPEC(prop(field, z_d))
+    if maximize:
         fc *= -1
         fd *= -1
     while abs(z_b - z_a) > tol:
@@ -60,45 +93,45 @@ def golden_section_search(field, z_a, z_b, wl, sz, threads=1, tol=1e-5, max_iter
         if fc < fd:
             z_b, z_d, fd = z_d, z_c, fc
             z_c = z_a + resphi * (z_b - z_a)
-            fc = -AMP(prop(field, z_c)) if phase_only else AMP(prop(field, z_c))
+            fc = -SPEC(prop(field, z_c)) if maximize else SPEC(prop(field, z_c))
         else:
             z_a, z_c, fc = z_c, z_d, fd
             z_d = z_b - resphi * (z_b - z_a)
-            fd = -AMP(prop(field, z_d)) if phase_only else AMP(prop(field, z_d))
+            fd = -SPEC(prop(field, z_d)) if maximize else SPEC(prop(field, z_d))
         iters += 1
     z0 = (z_b + z_a) / 2
-    final_score = -AMP(prop(field, z0)) if phase_only else AMP(prop(field, z0))
+    final_score = -SPEC(prop(field, z0)) if maximize else SPEC(prop(field, z0))
     return z0, final_score
 
 
 class AutoFocusSearch:
-    def __init__(self, chunk_size, num_chunks=1, num_workers=None, field_type='phase'):
+
+    def __init__(self, chunk_size, num_chunks=1, num_workers=None, maximize=False):
         assert num_chunks > 0, "There must be at least 1 chunk."
         assert chunk_size > 0, "Chunk size must be at least 1."
 
-        if type(field_type) is not str:
-            raise ValueError("Make field amplitude or phase only.")
-        if not (field_type.lower()=='phase' or field_type.lower()=='amplitude'):
-            raise ValueError("Make field amplitude or phase only.")
         self.num_workers = num_workers or os.cpu_count()
         self.num_chunks = num_chunks
         self.chunk_size = chunk_size
-        self._type = field_type.lower()
+        self._max = maximize
         self._dz = 0
 
     def __call__(self, field, zmin, zmax, wl, sz, threads=1, **kwargs):
-        zaxis, results, poi = self.broad_search(field, zmin, zmax, wl, sz, threads=threads)
-        phase_only = True if self._type == 'phase' else False
-        potential_extrema, scores = [], []
+        ax1, r1, poi = self.broad_search(field, zmin, zmax, wl, sz, threads=threads)
+
+        ax2, r2 = [], []
         width = self.chunk_size * self._dz / 2
         for p in poi:
             if p is not None:
-                z0 = zaxis[p]
-                potential_extreme, score = golden_section_search(field, z0 - width / 2, z0 + width / 2, wl, sz,
-                                                                       threads=threads, phase_only=phase_only, **kwargs)
-                potential_extrema.append(potential_extreme)
-                scores.append(score)
-        return zaxis, results, potential_extrema[np.argmin(scores)]
+                z0 = ax1[p]
+                z, score = golden_section_search(field, z0 - width / 2, z0 + width / 2, wl, sz,
+                                                                       threads=threads, maximize=self._max, **kwargs)
+                ax2.append(z)
+                r2.append(score)
+        ii = np.argsort(ax2)
+        ax2, r2 = np.array(ax2)[ii], np.array(r2)[ii]
+        z0 = ax2[np.argmin(r2)]
+        return z0, ax1, ax2, r1, r2, poi
 
     def _make_zaxis(self, zmin, zmax):
         n = self.chunk_size * self.num_chunks
@@ -120,8 +153,7 @@ class AutoFocusSearch:
             z = zaxis[start:end]
             if self.chunk_size == 1:
                 z = np.array([z])
-            phase_only = True if self._type == 'phase' else False
-            return parallel_propagate(field, z, wl, sz, self._dz, start, threads, phase_only=phase_only)
+            return parallel_propagate(field, z, wl, sz, self._dz, start, threads, maximize=self._max)
 
         with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
             for start, chunk_result, peak in executor.map(task, chunks):
