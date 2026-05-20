@@ -1,2 +1,2 @@
 # OffAxisHolography
-Code for performing off-axis holography in pure Python.
+Code for performing off-axis holography.
