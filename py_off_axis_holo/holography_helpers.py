@@ -161,8 +161,7 @@ def unpad_arr(a, nb):
             slice_indices.append(slice(nb[i], -nb[i]))
     return a[tuple(slice_indices)]
 
-
-def pad_to_square(image):
+def pad_to_sqr(image):
     """
     Pads a 2D image (NumPy array) to make it square.
 
@@ -171,21 +170,30 @@ def pad_to_square(image):
 
     Returns:
         padded_image (ndarray): Square padded image.
+        crop_h (slice): Indices to crop to along image height to return to original aspect ratio
+        crop_w (slice): Indices to crop to along image width to return to original aspect ratio
     """
 
+    assert image.ndim == 2, "Only designed for 2D images."
     h, w = image.shape
     if h == w:
         return image
 
     size = max(h, w)
-    pad_h = (size - h) // 2
-    pad_w = (size - w) // 2
+    pad_h_r = (size - h) // 2
+    pad_w_r = (size - w) // 2
+    if size % 2 == 0:
+        pad_h_l = pad_h_r
+        pad_w_l = pad_w_r
+    else:
+        pad_h_l = pad_h_r + 1
+        pad_w_l = pad_w_r + 1
 
     padded_image = np.pad(
         image,
-        ((pad_h, size - h - pad_h), (pad_w, size - w - pad_w)),
+        ((pad_h_r, pad_h_l), (pad_w_r, pad_w_l)),
         mode='constant',
         constant_values=0
     )
-    return padded_image
+    return padded_image, slice(pad_h_r, -pad_h_l), slice(pad_w_r, -pad_w_l)
 
