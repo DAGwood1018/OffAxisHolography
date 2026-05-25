@@ -72,13 +72,43 @@ def wrap_to_pi(phi):
     return phi
 
 
-def tukey_window(dims, alpha=0.5):
+def tukey_window(dims, alpha=0.1):
     if dims is int or len(dims) == 1:
         return signal.windows.tukey(dims, alpha=alpha)
     window = signal.windows.tukey(dims[0], alpha=alpha)
     for n in dims[1:]:
         wn = signal.windows.tukey(n, alpha=alpha)
         window = np.tensordot(window, wn, axes=0)
+    return window
+
+
+def ellip_tukey_window(dims, alpha=0.1):
+    if isinstance(dims, int) or len(dims) == 1:
+        n = dims if isinstance(dims, int) else dims[0]
+        return signal.windows.tukey(n, alpha=alpha)
+
+    # Build coordinate grids normalized by each axis radius
+    grids = []
+    for n in dims:
+        center = (n - 1) / 2
+        r = n / 2
+        coords = (np.arange(n) - center) / r  # values in (-1, 1]
+        grids.append(coords)
+
+    # Compute elliptical radius at each grid point
+    mesh = np.meshgrid(*grids, indexing='ij')
+    rho = np.sqrt(sum(g ** 2 for g in mesh))  # 0 at center, 1 on ellipse boundary
+
+    N = max(dims)
+    ref = signal.windows.tukey(N, alpha=alpha)
+
+    # rho in [0,1] maps from center to right edge of the reference window
+    idx = (rho * (N // 2 - 1)).astype(int).clip(0, N // 2 - 1)
+    idx_from_center = N // 2 + idx
+
+    window = ref[idx_from_center]
+    window[rho > 1] = 0
+
     return window
 
 

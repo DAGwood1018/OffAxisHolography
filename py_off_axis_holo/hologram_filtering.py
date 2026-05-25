@@ -64,7 +64,7 @@ def off_axis_masks(Fh, f10=None, mask_radius=None):
         assert mask_radius < r, "Radius of mask can not exceed distance from image center."
         r_1 = mask_radius
 
-    r_1 = np.round(r_1)
+    r_1 = int(np.floor(r_1))
     mask10 = np.sqrt((Fx - f10[1]) ** 2 + (Fy - f10[0]) ** 2) <= r_1
     mask01 = np.sqrt((Fx - f01[1]) ** 2 + (Fy - f01[0]) ** 2) <= r_1
     mask00 = np.sqrt((Fx - cx) ** 2 + (Fy - cy) ** 2) <= r_1
@@ -86,8 +86,7 @@ class OffAxisFilter(DFT):
         self._masks = None
         self._ref_wave = None
         self._filter_radius = None
-        self._filter_center = None
-        self._window = np.ones(self.input_shape)
+        self._window = None
 
     def __call__(self, fringes, only_crop_to_mask=False):
         """
@@ -112,28 +111,6 @@ class OffAxisFilter(DFT):
 
         field = self.backwards(Fh)
         return field
-
-    @property
-    def masked(self):
-        if self._masks is None:
-            return False
-        return True
-
-    def filter_dc(self, fringes):
-        """
-        :param fringes: Interferogram corresponding to an off-axis hologram
-        :type fringes: ndarray
-        :return: The DC term of the hologram
-        :rtype: ndarray
-        """
-
-        if not self.masked:
-            self.calibrate(fringes)
-
-        Fh = self.forwards(fringes)
-        Fh *= np.stack([self._masks[1] for _ in range(self.input_shape[0])]) if self._stacked else self._masks[1]
-        Fh = self.crop_to_mask(Fh, self._masks[1])
-        return self.backwards(Fh)
 
     def _calc_tilt(self, f):
         """
@@ -219,23 +196,6 @@ class OffAxisFilter(DFT):
         print(">>> Optimization Routine Complete.")
         return np.array(res.x)
 
-    def _crop_back_transform(self, dims, nstack):
-        threads = self._ifft.threads
-        dtype = self._ifft.dtype
-        flags = self._ifft.flags
-        out_dir = self._ifft.direction
-        self._ifft = DiscreteTransform(dims, out_dir, dtype, threads=threads, nstack=nstack, flags=flags)
-
-    def crop_to_mask(self, a, mask):
-        coords = np.argwhere(mask)
-        m_min, n_min = coords.min(axis=0)
-        m_max, n_max = coords.max(axis=0)
-
-        dims = [m_max+1-m_min, n_max+1-n_min]
-        nstack = a.shape[0] if self._stacked else 0
-        self._crop_back_transform(dims, nstack)
-        return a[:, m_min:m_max + 1, n_min:n_max + 1] if self._stacked else a[m_min:m_max + 1, n_min:n_max + 1]
-
     def _visualize_roi(self, fringes):
         if not self._ref_wave is None:
             fringes = fringes * self._ref_wave
@@ -244,17 +204,61 @@ class OffAxisFilter(DFT):
 
         cv2.namedWindow('visualize_roi', cv2.WINDOW_NORMAL)
         cv2.imshow('visualize_roi', Fh)
+
         cv2.waitKey(1500)
         Fh *= self._masks[1].astype('uint8')
         cv2.imshow('visualize_roi', Fh)
         cv2.waitKey(4000)
+
         if cv2.getWindowProperty('visualize_roi', cv2.WND_PROP_VISIBLE) >= 1:
             cv2.destroyWindow('visualize_roi')
         return True
 
-    def forwards(self, a):
-        window = np.stack([self._window for _ in range(self.input_shape[0])]) if self._stacked else self._window
-        return super().forwards(a * window)
+    @property
+    def masked(self):
+        if self._masks is None:
+            return False
+        return True
+
+    def filter_dc(self, fringes):
+        """
+        :param fringes: Interferogram corresponding to an off-axis hologram
+        :type fringes: ndarray
+        :return: The DC term of the hologram
+        :rtype: ndarray
+        """
+
+        if not self.masked:
+            self.calibrate(fringes)
+
+        Fh = self.forwards(fringes)
+        Fh *= np.stack([self._masks[1] for _ in range(self.input_shape[0])]) if self._stacked else self._masks[1]
+        Fh = self.crop_to_mask(Fh, self._masks[1])
+        return self.backwards(Fh)
+
+    def crop_to_mask(self, a, mask):
+        coords = np.argwhere(mask)
+        m_min, n_min = coords.min(axis=0)
+        m_max, n_max = coords.max(axis=0)
+        return a[:, m_min:m_max, n_min:n_max] if self._stacked else a[m_min:m_max, n_min:n_max]
+
+    def unpad_array(self, a):
+        """
+        Removes array padding.
+
+        :param a: Input array.
+        :type a: ndarray<complex>
+        :return: Padding array.
+        :rtype: ndarray<complex>
+        """
+
+        nb = [0] if self._stacked else []
+        axes = [1, 2] if self._stacked else [0, 1]
+        for i in axes:
+            cropped_nb = (2 * self._nb / self.input_shape[i]) * self.output_shape[i]
+            cropped_nb // 2
+            nb.append(int(cropped_nb))
+        return unpad_arr(a, nb)
 
     def backwards(self, b):
         """
@@ -266,22 +270,19 @@ class OffAxisFilter(DFT):
         :rtype: ndarray<complex>
         """
 
-        assert tuple(b.shape) == self.output_shape, "Shape of array must be " + str(self.output_shape)
-        a = self._ifft(np.fft.ifftshift(b), ortho=self._ortho, normalise_idft=False)
-        if self._nb > 0:
-            nb = [0] if self._stacked else []
-            axes = [1, 2] if self._stacked else [0, 1]
-            for i in axes:
-                new_nb = (2*self._nb / self.input_shape[i]) * self.output_shape[i]
-                new_nb // 2
-                nb.append(int(new_nb))
-            return unpad_arr(a, nb)
-        return a
+        if self._window is not None:
+            window = np.stack([self._window for _ in range(self.output_shape[0])]) if self._stacked else self._window
+            return super().backwards(b*window)
+        return super().backwards(b)
 
     def add_window(self, window_fcn, **kwargs):
+        if not self.masked:
+            warn("Must align spatial filter before adding window function.")
+            return False
         if callable(window_fcn):
             try:
-                self._window = window_fcn(self._dims, **kwargs)
+                out_dims = self.output_shape[1:] if self._stacked else self.output_shape
+                self._window = window_fcn(out_dims, **kwargs)
                 return True
             except TypeError:
                 warn("Invalid window function provided.")
@@ -293,9 +294,10 @@ class OffAxisFilter(DFT):
         X, Y = gridspace(M, N, 0, True)
         return ref_phase_shift((X, Y), tilt, self._k0, self._sz)
 
-    def calibrate(self, fringes, mask_radius=None, optimize=True, visualize=False, **kwargs):
+    def calibrate(self, fringes, roi=None, mask_radius=None, optimize=True, visualize=False, **kwargs):
         """
         :param fringes: Hologram (typically of background) to calibrate phase filtering to.
+        :param roi: A pre-selected ROI to calibrate with.
         :param mask_radius: Override the automatic radius of the mask if not None.
         :param optimize: Optimize the mask center according to some cost function.
         :param visualize: Show image of mask.
@@ -306,54 +308,45 @@ class OffAxisFilter(DFT):
 
         self.reset()
         Fh = self.forwards(fringes)
-        roi, f10 = select_mask_roi(np.abs(Fh)**(1/4))
+        if roi is None:
+            roi, f10 = select_mask_roi(np.abs(Fh)**(1/4))
+        else:
+            f10 = find_peak_in_roi(np.abs(Fh)**(1/4), roi)
         self._filter_radius, self._masks = off_axis_masks(Fh, f10=f10, mask_radius=mask_radius)
         freq = [f10[1] - Fh.shape[1] / 2, f10[0] - Fh.shape[0] / 2]
 
+        # Attempt to optimize the spatial filter alignment
         if optimize:
             try:
                 Fh = self.forwards(fringes) * self._masks[0]
                 phi = np.angle(self.backwards(Fh))
                 freq = self._optimize_tilt(freq, phi, **kwargs)
+                f10 = [freq[1] + Fh.shape[1] / 2, freq[0] + Fh.shape[0] / 2]
+                self._filter_radius, self._masks = off_axis_masks(Fh, f10=f10, mask_radius=mask_radius)
             except RuntimeError:
                 warn("Could not align to tilt.")
 
-        self._filter_center = [freq[1] + Fh.shape[1] / 2, freq[0] + Fh.shape[0] / 2]
+        # Construct digital reference wave
         self._ref_wave = self.construct_reference(freq, self._dims[0], self._dims[1])
+
+        # Crop ifft to spatial filter
+        nstack = self.input_shape[0] if self._stacked else 0
+        nthreads = self._ifft.threads
+        flags = self._ifft.flags
+        out_dir = self._ifft.direction
+        dtype = self._ifft.dtype
+        self._ifft = DiscreteTransform((2*self._filter_radius, 2*self._filter_radius), out_dir, dtype,
+                                       threads=nthreads, nstack=nstack, flags=flags)
         if visualize:
             self._visualize_roi(fringes)
         return roi, f10
-
-    def auto_calibrate(self, fringes, roi, mask_radius=None, **kwargs):
-        """
-        :param fringes: Hologram (typically of background) to calibrate phase filtering to.
-        :param roi: A pre-selected ROI to calibrate with.
-        :param mask_radius: Override the automatic radius of the mask if not None.
-        :param kwargs: Optional arguments to optimization routine.
-        """
-
-        self.reset()
-        Fh = self.forwards(fringes)
-        f10 = find_peak_in_roi(np.abs(Fh)**(1/4), roi)
-        self._filter_radius, self._masks = off_axis_masks(Fh, f10=f10, mask_radius=mask_radius)
-        freq = [f10[1] - Fh.shape[1] / 2, f10[0] - Fh.shape[0] / 2]
-
-        try:
-            Fh = self.forwards(fringes) * self._masks[0]
-            phi = np.angle(self.backwards(Fh))
-            freq = self._optimize_tilt(freq, phi, **kwargs)
-        except RuntimeError:
-            warn("Could not align to tilt.")
-
-        self._filter_center = [freq[1] + Fh.shape[1] / 2, freq[0] + Fh.shape[0] / 2]
-        self._ref_wave = self.construct_reference(freq, self._dims[0], self._dims[1])
-        return f10
+        
 
     def reset(self):
-        dims = self.input_shape[1:] if self._stacked else self._dims
+        dims = self.input_shape[1:] if self._stacked else self.input_shape
         self._masks = None
         self._ref_wave = None
-        self._window = np.ones(dims)
+        self._window = None
         self._stacked = False
 
         self._fft = DiscreteTransform(dims, self._fft.direction, self._fft.dtype, threads=self._fft.threads,
