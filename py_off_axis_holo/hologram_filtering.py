@@ -1,5 +1,4 @@
 import numpy as np
-import logging
 import cv2
 
 from scipy.optimize import minimize
@@ -8,9 +7,6 @@ from py_off_axis_holo.discrete_transforms import DFT, DiscreteTransform
 from py_off_axis_holo.holography_helpers import ref_phase_shift, gridspace, format_holo, crop_to_mask, unpad_arr
 from warnings import warn
 
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    handlers=[logging.StreamHandler()])
 
 def select_mask_roi(Fh):
     Fh_img = format_holo(Fh)
@@ -31,7 +27,7 @@ def select_mask_roi(Fh):
 
     f1 = np.array([(peaks[0][0]), (peaks[0][1])])
     cv2.destroyWindow('Masking')
-    logging.info(f'Selected ROI centered at a tilt of ({f1[0]}, {f1[1]}).')
+    print(f'>>> Selected ROI centered at a tilt of ({f1[0]}, {f1[1]}).')
     return ROI, f1
 
 def find_peak_in_roi(Fh, ROI):
@@ -50,7 +46,7 @@ def find_peak_in_roi(Fh, ROI):
     f1 = np.array([(peaks[0][0]), (peaks[0][1])])
     return f1
 
-def off_axis_masks(Fh, f10=None, mask_radius=None, sqr_masks=False):
+def off_axis_masks(Fh, f10=None, mask_radius=None):
     f10 = np.array(f10)
     if f10 is None:
         _, f10 = select_mask_roi(np.abs(Fh)**(1/4))
@@ -69,20 +65,15 @@ def off_axis_masks(Fh, f10=None, mask_radius=None, sqr_masks=False):
         r_1 = mask_radius
 
     r_1 = np.round(r_1)
-    if sqr_masks:
-        mask10 = r_1 <= (Fx - f10[1]) <= r_1 <= (Fy - f10[0]) <= r_1
-        mask01 = r_1 <= (Fx - f01[1]) <= r_1 <= (Fy - f01[0]) <= r_1
-        mask00 = r_1 <= (Fx - cx) <= r_1 <= (Fy - cy) <= r_1
-    else:
-        mask10 = np.sqrt((Fx - f10[1]) ** 2 + (Fy - f10[0]) ** 2) <= r_1
-        mask01 = np.sqrt((Fx - f01[1]) ** 2 + (Fy - f01[0]) ** 2) <= r_1
-        mask00 = np.sqrt((Fx - cx) ** 2 + (Fy - cy) ** 2) <= r_1
+    mask10 = np.sqrt((Fx - f10[1]) ** 2 + (Fy - f10[0]) ** 2) <= r_1
+    mask01 = np.sqrt((Fx - f01[1]) ** 2 + (Fy - f01[0]) ** 2) <= r_1
+    mask00 = np.sqrt((Fx - cx) ** 2 + (Fy - cy) ** 2) <= r_1
     return r_1, (mask10, mask00, mask01)
 
 
 class OffAxisFilter(DFT):
 
-    def __init__(self, M, N, wl, sz, nb=0, threads=1, dtype='complex128', sqr_masks=False, **kwargs):
+    def __init__(self, M, N, wl, sz, nb=0, threads=1, dtype='complex128', **kwargs):
         """
         *Using un-normalized FFTs is fine since we are only concerned with the phase information.
         """
@@ -96,51 +87,30 @@ class OffAxisFilter(DFT):
         self._ref_wave = None
         self._filter_radius = None
         self._filter_center = None
-        self._sqr_masks = sqr_masks
         self._window = np.ones(self.input_shape)
 
-    def __call__(self, fringes, only_crop_to_mask=False, self_RCH=False, RCH_r_factor=0.1):
+    def __call__(self, fringes, only_crop_to_mask=False):
         """
         :param fringes: Interferogram corresponding to an off-axis hologram
         :type fringes: ndarray
         :param only_crop_to_mask: If True the field is not multiplied by a reference wave.
-        :param self_RCH: If True the reference conjugate hologram is applied.
-        :param RCH_r_factor: Percentage of filter radius to use as radius of maskk used to extrac the RCH.
         :return: The +/-1 (off-axis) term of the hologram
         :rtype: ndarray
         """
 
         if not self.masked:
             self.calibrate(fringes)
-        assert 0 < RCH_r_factor < 1.0, "This parameter is a percentage and must be between 0 and 1."
 
         if only_crop_to_mask is None:
             Fh = self.forwards(fringes)
-            if self_RCH:
-                RCH = Fh.copy()
-                dims = self.input_shape[1:] if self._stacked else self.input_shape
-                _, RCH_masks = off_axis_masks(np.empty(dims), f10=self._filter_center,
-                                              mask_radius=np.round(0.1*self._filter_radius), sqr_masks=self._sqr_masks)
-                RCH *= np.stack([RCH_masks[0] for _ in range(self.input_shape[0])]) if self._stacked else RCH_masks[0]
-                RCH = self.crop_to_mask(RCH, self._masks[0])
             Fh *= np.stack([self._masks[0] for _ in range(self.input_shape[0])]) if self._stacked else self._masks[0]
             Fh = self.crop_to_mask(Fh, self._masks[0])
         else:
             Fh = self.forwards(fringes * self._ref_wave)
-            if self_RCH:
-                RCH = Fh.copy()
-                dims = self.input_shape[1:] if self._stacked else self.input_shape
-                _, RCH_masks = off_axis_masks(np.empty(dims), f10=self._filter_center,
-                                              mask_radius=np.round(0.1*self._filter_radius), sqr_masks=self._sqr_masks)
-                RCH *= np.stack([RCH_masks[1] for _ in range(self.input_shape[0])]) if self._stacked else RCH_masks[1]
-                RCH = self.crop_to_mask(RCH, self._masks[1])
             Fh *= np.stack([self._masks[1] for _ in range(self.input_shape[0])]) if self._stacked else self._masks[1]
             Fh = self.crop_to_mask(Fh, self._masks[1])
 
         field = self.backwards(Fh)
-        if self_RCH:
-            RCH_field = self.backwards(RCH)
-            field *= np.exp(-1j*np.angle(RCH_field))
         return field
 
     @property
@@ -222,7 +192,7 @@ class OffAxisFilter(DFT):
         return mag.sum()
 
     def _optimize_tilt(self, freq, phase, method='TNC', cost='kqr', tol=1e-8, step=None, opts=None):
-        logging.info("Aligning Mask to Inferred Tilt...")
+        print(">>> Aligning Mask to Inferred Tilt...")
         M, N = self._dims
         X, Y = gridspace(M, N, 0, True)
 
@@ -246,7 +216,7 @@ class OffAxisFilter(DFT):
             cost_func = self._min_ksqr
         res = minimize(cost_func, freq, args=(phase, X, Y),
                        method=method, bounds=bounds, tol=tol, options=opts)
-        logging.info("Optimization Routine Complete.")
+        print(">>> Optimization Routine Complete.")
         return np.array(res.x)
 
     def _crop_back_transform(self, dims, nstack):
@@ -337,7 +307,7 @@ class OffAxisFilter(DFT):
         self.reset()
         Fh = self.forwards(fringes)
         roi, f10 = select_mask_roi(np.abs(Fh)**(1/4))
-        self._filter_radius, self._masks = off_axis_masks(Fh, f10=f10, mask_radius=mask_radius, sqr_masks=self._sqr_masks)
+        self._filter_radius, self._masks = off_axis_masks(Fh, f10=f10, mask_radius=mask_radius)
         freq = [f10[1] - Fh.shape[1] / 2, f10[0] - Fh.shape[0] / 2]
 
         if optimize:
@@ -365,7 +335,7 @@ class OffAxisFilter(DFT):
         self.reset()
         Fh = self.forwards(fringes)
         f10 = find_peak_in_roi(np.abs(Fh)**(1/4), roi)
-        self._filter_radius, self._masks = off_axis_masks(Fh, f10=f10, mask_radius=mask_radius, sqr_masks=self._sqr_masks)
+        self._filter_radius, self._masks = off_axis_masks(Fh, f10=f10, mask_radius=mask_radius)
         freq = [f10[1] - Fh.shape[1] / 2, f10[0] - Fh.shape[0] / 2]
 
         try:
