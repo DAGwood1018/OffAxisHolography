@@ -78,6 +78,16 @@ class OffAxisFilter(DFT):
         *Using un-normalized FFTs is fine since we are only concerned with the phase information.
         """
 
+        # Ensure a 1:1 aspect ratio
+        assert type(M) is int and type(N) is int, "Shape of array must be given in ints."
+        pad_m, pad_n = 0, 0
+        if M > N:
+            pad_n = M-N
+        elif N > M:
+            pad_m = N-M
+        M += pad_m
+        N += pad_n
+
         super().__init__((M, N), nb, threads=threads, dtype=dtype, **kwargs)
         self._dims = np.array([M, N])
         self._k0 = 2 * np.pi / wl
@@ -87,6 +97,7 @@ class OffAxisFilter(DFT):
         self._ref_wave = None
         self._filter_radius = None
         self._window = None
+        self._sqr_padding = (pad_m, pad_n)
 
     def __call__(self, fringes, only_crop_to_mask=False):
         """
@@ -100,12 +111,13 @@ class OffAxisFilter(DFT):
         if not self.masked:
             self.calibrate(fringes)
 
+        a = self.fix_aspect_ratio(fringes)
         if only_crop_to_mask is None:
-            Fh = self.forwards(fringes)
+            Fh = self.forwards(a)
             Fh *= np.stack([self._masks[0] for _ in range(self.input_shape[0])]) if self._stacked else self._masks[0]
             Fh = self.crop_to_mask(Fh, self._masks[0])
         else:
-            Fh = self.forwards(fringes * self._ref_wave)
+            Fh = self.forwards(a * self._ref_wave)
             Fh *= np.stack([self._masks[1] for _ in range(self.input_shape[0])]) if self._stacked else self._masks[1]
             Fh = self.crop_to_mask(Fh, self._masks[1])
 
@@ -197,9 +209,10 @@ class OffAxisFilter(DFT):
         return np.array(res.x)
 
     def _visualize_roi(self, fringes):
+        a = self.fix_aspect_ratio(fringes)
         if not self._ref_wave is None:
-            fringes = fringes * self._ref_wave
-        Fh = self.forwards(fringes)
+            a = a*self._ref_wave
+        Fh = self.forwards(a)
         Fh = format_holo(np.abs(Fh) ** (1 / 4))
 
         cv2.namedWindow('visualize_roi', cv2.WINDOW_NORMAL)
@@ -231,7 +244,8 @@ class OffAxisFilter(DFT):
         if not self.masked:
             self.calibrate(fringes)
 
-        Fh = self.forwards(fringes)
+        a = self.fix_aspect_ratio(fringes)
+        Fh = self.forwards(a)
         Fh *= np.stack([self._masks[1] for _ in range(self.input_shape[0])]) if self._stacked else self._masks[1]
         Fh = self.crop_to_mask(Fh, self._masks[1])
         return self.backwards(Fh)
@@ -241,6 +255,33 @@ class OffAxisFilter(DFT):
         m_min, n_min = coords.min(axis=0)
         m_max, n_max = coords.max(axis=0)
         return a[:, m_min:m_max, n_min:n_max] if self._stacked else a[m_min:m_max, n_min:n_max]
+
+    def fix_aspect_ratio(self, a):
+        pad_m, pad_n = self._sqr_padding
+        if pad_m == pad_n:
+            return a
+
+        padding = (0,(0, pad_m),(0, pad_n)) if self._stacked else ((0, pad_m), (0, pad_n))
+        a_padded = np.pad(
+            a, padding,
+            mode='constant',
+            constant_values=0
+        )
+        return a_padded
+
+    def restore_aspect_ratio(self, a):
+        pad_m, pad_n = self._sqr_padding
+        if pad_m == 0 and pad_n == 0:
+            return a
+
+        axes = [1, 2] if self._stacked else [0, 1]
+        mm = self.output_shape[axes[0]] - int((pad_m / self.input_shape[axes[0]]) * self.output_shape[axes[0]])
+        nn = self.output_shape[axes[0]] - int((pad_n / self.input_shape[axes[1]]) * self.output_shape[axes[1]])
+
+        if self._stacked:
+            return a[:, 0:mm, 0:nn]
+        else:
+            return a[0:mm, 0:nn]
 
     def unpad_array(self, a):
         """
@@ -272,8 +313,10 @@ class OffAxisFilter(DFT):
 
         if self._window is not None:
             window = np.stack([self._window for _ in range(self.output_shape[0])]) if self._stacked else self._window
-            return super().backwards(b*window)
-        return super().backwards(b)
+            a = super().backwards(b*window)
+        else:
+            a = super().backwards(b)
+        return self.restore_aspect_ratio(a)
 
     def add_window(self, window_fcn, **kwargs):
         if not self.masked:
@@ -307,7 +350,8 @@ class OffAxisFilter(DFT):
         """
 
         self.reset()
-        Fh = self.forwards(fringes)
+        a = self.fix_aspect_ratio(fringes)
+        Fh = self.forwards(a)
         if roi is None:
             roi, f10 = select_mask_roi(np.abs(Fh)**(1/4))
         else:
@@ -318,7 +362,7 @@ class OffAxisFilter(DFT):
         # Attempt to optimize the spatial filter alignment
         if optimize:
             try:
-                Fh = self.forwards(fringes) * self._masks[0]
+                Fh = self.forwards(a) * self._masks[0]
                 phi = np.angle(self.backwards(Fh))
                 freq = self._optimize_tilt(freq, phi, **kwargs)
                 f10 = [freq[1] + Fh.shape[1] / 2, freq[0] + Fh.shape[0] / 2]
