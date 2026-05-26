@@ -261,7 +261,7 @@ class OffAxisFilter(DFT):
         if pad_m == pad_n:
             return a
 
-        padding = ((0, 0),(0, pad_m),(0, pad_n)) if self._stacked else ((0, pad_m), (0, pad_n))
+        padding = ((0, 0),(0, pad_m),(0, pad_n)) if self._stacked else ((0, pad_m),(0, pad_n))
         a_padded = np.pad(
             a, padding,
             mode='constant',
