@@ -1,8 +1,6 @@
 import numpy as np
 from numba import njit, prange
 
-#TODO the logic of this search method is currently flawed I am missing the absolute min in my test case.
-
 @njit
 def AMP(field):
     """
@@ -18,10 +16,12 @@ def EIG(field, alpha=0.0):
     """
     :param field: Complex field.
     :param alpha: Percentage of eigenvalues to throw out. Only necessary if magnification isn't fixed (lensless).
-    :return: Score related to how in-focus the image is. Maximized for pure amplitude, minimized for pure phase.
+    :return: Score related to how in-focus the image is. Minimized for pure amplitude, maximized for pure phase.
     :rtype: float
     """
 
+    if alpha < 0 or alpha >= 1.0:
+        alpha = 0.0
     u = np.abs(field)
     N = np.sqrt(np.sum((u**2).flatten()))
     U = u / N
@@ -30,9 +30,9 @@ def EIG(field, alpha=0.0):
     eigvals = np.linalg.eigvalsh(G @ G.T)
     kappa = int(np.floor(alpha * len(eigvals)))
     if kappa == 0:
-        return np.sum(eigvals)
+        return -1*np.sum(eigvals)
     else:
-        return np.sum(eigvals[0:-kappa])
+        return -1*np.sum(eigvals[0:-kappa])
 
 @njit
 def angular_spectrum(field, z, wl, sz):
@@ -63,71 +63,76 @@ def angular_spectrum(field, z, wl, sz):
 
 
 @njit(parallel=True)
-def scan_focus(field, wl, sz, zmin, zmax, nz):
+def scan_focus(field, wl, sz, zmin, zmax, nz, alpha=-1.0):
     """
     Propagates a complex field to N planes between zmin and zmax and computes
     the SPEC focus metric at each plane.
 
     :param field:       2D complex input field, shape (Ny, Nx).
+    :param wl:          Wavelength of light.
+    :param sz:          Pixel pitch (assumes square pixels).
     :param zmin:        Minimum propagation distance.
     :param zmax:        Maximum propagation distance.
-    :param nz:           Number of z planes.
-    :param sz:          Pixel pitch (assumes square pixels).
-    :param wl:  Wavelength of light.
-    :return:            z_values (N,), scores (N,).
+    :param nz:          Number of z planes to sample.
+    :param alpha:       If alpha<0 AMP method used, if 1>alpha>=0 determines the % of eigvals to discard in EIG method.
+    :return:            zaxis (N,), scores (N,).
     """
 
-    z_values = np.linspace(zmin, zmax, nz)
+    zaxis = np.linspace(zmin, zmax, nz)
     scores = np.empty(nz, dtype=np.float64)
 
+    print('>>> Scanning field across focal planes...')
     for i in prange(nz):
-        fieldz = angular_spectrum(field, z_values[i], wl, sz)
-        scores[i] = AMP(fieldz)
-    return z_values, scores
+        fieldz = angular_spectrum(field, zaxis[i], wl, sz)
+        scores[i] = AMP(fieldz) if alpha < 0 or alpha >= 1.0 else EIG(fieldz, alpha)
+    print('>>> Scan complete.')
+    return zaxis, scores
 
 @njit
-def find_focal_dist(field, zaxis, scores, wl, sz, tol=1e-6):
+def find_best_focus(field, wl, sz, zmin, zmax, tol=1e-6, alpha=-1.0, maximize=False):
     """
     Performs a golden section search around the global minimum found in scores.
 
     :param field:       2D complex input field.
-    :param zaxis:    1D array of z values from SPEC_propagate.
-    :param scores:      1D array of SPEC scores from SPEC_propagate.
-    :param sz:          Pixel pitch.
-    :param wl:  Wavelength of light.
+    :param wl:          Wavelength of light.
+    :param sz:          Pixel pitch (assumes square pixels).
+    :param zmin:        Minimum propagation distance.
+    :param zmax:        Maximum propagation distance.
     :param tol:         Convergence tolerance.
-    :return:            z value at which SPEC is minimized.
+    :param alpha:       If alpha<0 AMP method used, if 1>alpha>=0 determines the % of eigvals to discard in EIG method.
+    :param maximize:    Whether the focus metric should be maximized. If False it is minimized.
+    :return:            z value at which focus metric is minimized/maximized and the field at that z value.
     """
 
-    idx = np.argmin(scores)
-
-    if idx - 1 > 0:
-        zmin = zaxis[idx - 1]
-    else:
-        zmin = zaxis[0]
-
-    if idx + 1 < len(zaxis) - 1:
-        zmax = zaxis[idx + 1]
-    else:
-        zmax = zaxis[len(zaxis) - 1]
-
+    print('>>> Searching for best focus in given range...')
     gr = (np.sqrt(5.0) + 1.0) / 2.0
-
     zc = zmax - (zmax - zmin) / gr
     zd = zmin + (zmax - zmin) / gr
-    fc = AMP(angular_spectrum(field, zc, sz, wl))
-    fd = AMP(angular_spectrum(field, zd, sz, wl))
 
+    Uc, Ud = angular_spectrum(field, zc, wl, sz), angular_spectrum(field, zd, wl, sz)
+    fc = AMP(Uc) if alpha < 0 or alpha >= 1.0 else EIG(Uc, alpha)
+    fd = AMP(Ud) if alpha < 0 or alpha >= 1.0 else EIG(Ud, alpha)
+    if maximize:
+        fc *= -1
+        fd *= -1
     while abs(zmax - zmin) > tol:
         if fc < fd:
             zmax = zd
             zd, fd = zc, fc
             zc = zmax - (zmax - zmin) / gr
-            fc = AMP(angular_spectrum(field, zc, sz, wl))
+            Uc = angular_spectrum(field, zc, wl, sz)
+            fc = AMP(Uc) if alpha < 0 or alpha >= 1.0 else EIG(Uc, alpha)
+            if maximize:
+                fc *= -1
         else:
             zmin = zc
             zc, fc = zd, fd
             zd = zmin + (zmax - zmin) / gr
-            fd = AMP(angular_spectrum(field, zd, sz, wl))
+            Ud = angular_spectrum(field, zd, wl, sz)
+            fd = AMP(Ud) if alpha < 0 or alpha >= 1.0 else EIG(Ud, alpha)
+            if maximize:
+                fd *= -1
 
-    return (zmin + zmax) / 2.0
+    print('>>> Found best focal plane in given range.')
+    z0 = (zmin + zmax) / 2.0
+    return z0, angular_spectrum(field, z0, wl, sz)
