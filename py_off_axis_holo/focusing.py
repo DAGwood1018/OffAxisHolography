@@ -1,7 +1,8 @@
 import numpy as np
 from numba import njit, prange
 
-@njit
+
+@njit(cache=True)
 def AMP(field):
     """
     :param field: Complex field.
@@ -11,7 +12,7 @@ def AMP(field):
 
     return np.sum(np.sqrt(np.abs(field)).flatten())
 
-@njit
+@njit(cache=True)
 def EIG(field, alpha=0.0):
     """
     :param field: Complex field.
@@ -34,7 +35,7 @@ def EIG(field, alpha=0.0):
     else:
         return -1*np.sum(eigvals[0:-kappa])
 
-@njit
+@njit(cache=True)
 def angular_spectrum(field, z, wl, sz):
     """
     Propagates a complex field to a single plane using the Angular Spectrum Method.
@@ -42,15 +43,15 @@ def angular_spectrum(field, z, wl, sz):
     :param field:       2D complex input field, shape (Ny, Nx).
     :param z:           Propagation distance.
     :param sz:          Pixel pitch (assumes square pixels).
-    :param wl:  Wavelength of light.
+    :param wl:          Wavelength of light.
     :return:            2D complex propagated field, shape (Ny, Nx).
     """
 
     Ny, Nx = field.shape
     k = 2 * np.pi / wl
 
-    fx = np.fft.fftshift(np.fft.fftfreq(Nx, sz))
-    fy = np.fft.fftshift(np.fft.fftfreq(Ny, sz))
+    fx = np.fft.fftfreq(Nx, sz)
+    fy = np.fft.fftfreq(Ny, sz)
 
     # Manual broadcasting: reshape to (1, Nx) and (Ny, 1)
     FX = fx.reshape(1, Nx)
@@ -58,11 +59,11 @@ def angular_spectrum(field, z, wl, sz):
 
     arg = 1.0 - (wl * FX)**2 - (wl * FY)**2
     H = np.exp(1j * k * z * np.sqrt(arg))
-    F = np.fft.fftshift(np.fft.fft2(field))
-    return np.fft.ifft2(np.fft.ifftshift(F * H))
+    Ft = np.fft.fft2(field)
+    return np.fft.ifft2(Ft * H)
 
 
-@njit(parallel=True)
+@njit(parallel=True, cache=True)
 def scan_focus(field, wl, sz, zmin, zmax, nz, alpha=-1.0):
     """
     Propagates a complex field to N planes between zmin and zmax and computes
@@ -81,14 +82,12 @@ def scan_focus(field, wl, sz, zmin, zmax, nz, alpha=-1.0):
     zaxis = np.linspace(zmin, zmax, nz)
     scores = np.empty(nz, dtype=np.float64)
 
-    print('>>> Scanning field across focal planes...')
     for i in prange(nz):
         fieldz = angular_spectrum(field, zaxis[i], wl, sz)
         scores[i] = AMP(fieldz) if alpha < 0 or alpha >= 1.0 else EIG(fieldz, alpha)
-    print('>>> Scan complete.')
     return zaxis, scores
 
-@njit
+@njit(cache=True)
 def find_best_focus(field, wl, sz, zmin, zmax, tol=1e-6, alpha=-1.0, maximize=False):
     """
     Performs a golden section search around the global minimum found in scores.
@@ -104,7 +103,6 @@ def find_best_focus(field, wl, sz, zmin, zmax, tol=1e-6, alpha=-1.0, maximize=Fa
     :return:            z value at which focus metric is minimized/maximized and the field at that z value.
     """
 
-    print('>>> Searching for best focus in given range...')
     gr = (np.sqrt(5.0) + 1.0) / 2.0
     zc = zmax - (zmax - zmin) / gr
     zd = zmin + (zmax - zmin) / gr
@@ -133,6 +131,5 @@ def find_best_focus(field, wl, sz, zmin, zmax, tol=1e-6, alpha=-1.0, maximize=Fa
             if maximize:
                 fd *= -1
 
-    print('>>> Found best focal plane in given range.')
     z0 = (zmin + zmax) / 2.0
     return z0, angular_spectrum(field, z0, wl, sz)
