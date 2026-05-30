@@ -36,18 +36,28 @@ def EIG(field, alpha=0.0):
         return -1*np.sum(eigvals[0:-kappa])
 
 @njit(cache=True)
-def angular_spectrum(field, z, wl, sz):
+def angular_spectrum(field, z, wl, sz, nb=0):
     """
     Propagates a complex field to a single plane using the Angular Spectrum Method.
 
     :param field:       2D complex input field, shape (Ny, Nx).
     :param z:           Propagation distance.
-    :param sz:          Pixel pitch (assumes square pixels).
     :param wl:          Wavelength of light.
+    :param sz:          Pixel pitch (assumes square pixels).
+    :param nb:          Zero padding to apply to the field. Default is 0.
     :return:            2D complex propagated field, shape (Ny, Nx).
     """
 
-    Ny, Nx = field.shape
+    if nb > 0:
+        m, n = field.shape
+        input = np.zeros((m + nb//2, n + nb//2), dtype=field.dtype)
+        for i in range(m):
+            for j in range(n):
+                input[i + nb, j + nb] = field[i, j]
+    else:
+        input = field
+
+    Ny, Nx = input.shape
     k = 2 * np.pi / wl
 
     fx = np.fft.fftfreq(Nx, sz)
@@ -60,11 +70,10 @@ def angular_spectrum(field, z, wl, sz):
     arg = 1.0 - (wl * FX)**2 - (wl * FY)**2
     H = np.exp(1j * k * z * np.sqrt(arg))
     Ft = np.fft.fft2(field)
-    return np.fft.ifft2(Ft * H)
-
+    return np.fft.ifft2(Ft * H)[nb//2:-nb//2, nb//2:-nb//2] if nb>0 else np.fft.ifft2(Ft * H)
 
 @njit(parallel=True, cache=True)
-def scan_focus(field, wl, sz, zmin, zmax, nz, alpha=-1.0):
+def scan_focus(field, wl, sz, zmin, zmax, nz, alpha=-1.0, nb=0):
     """
     Propagates a complex field to N planes between zmin and zmax and computes
     the SPEC focus metric at each plane.
@@ -75,6 +84,7 @@ def scan_focus(field, wl, sz, zmin, zmax, nz, alpha=-1.0):
     :param zmin:        Minimum propagation distance.
     :param zmax:        Maximum propagation distance.
     :param nz:          Number of z planes to sample.
+    :param nb:          Zero padding to apply to the field. Default is 0.
     :param alpha:       If alpha<0 AMP method used, if 1>alpha>=0 determines the % of eigvals to discard in EIG method.
     :return:            zaxis (N,), scores (N,).
     """
@@ -83,12 +93,12 @@ def scan_focus(field, wl, sz, zmin, zmax, nz, alpha=-1.0):
     scores = np.empty(nz, dtype=np.float64)
 
     for i in prange(nz):
-        fieldz = angular_spectrum(field, zaxis[i], wl, sz)
+        fieldz = angular_spectrum(field, zaxis[i], wl, sz, nb=nb)
         scores[i] = AMP(fieldz) if alpha < 0 or alpha >= 1.0 else EIG(fieldz, alpha)
     return zaxis, scores
 
 @njit(cache=True)
-def find_best_focus(field, wl, sz, zmin, zmax, tol=1e-6, alpha=-1.0, maximize=False):
+def find_best_focus(field, wl, sz, zmin, zmax, tol=1e-6, alpha=-1.0, nb=0, maximize=False):
     """
     Performs a golden section search around the global minimum found in scores.
 
@@ -99,6 +109,7 @@ def find_best_focus(field, wl, sz, zmin, zmax, tol=1e-6, alpha=-1.0, maximize=Fa
     :param zmax:        Maximum propagation distance.
     :param tol:         Convergence tolerance.
     :param alpha:       If alpha<0 AMP method used, if 1>alpha>=0 determines the % of eigvals to discard in EIG method.
+    :param nb:          Zero padding to apply to the field. Default is 0.
     :param maximize:    Whether the focus metric should be maximized. If False it is minimized.
     :return:            z value at which focus metric is minimized/maximized and the field at that z value.
     """
@@ -107,7 +118,7 @@ def find_best_focus(field, wl, sz, zmin, zmax, tol=1e-6, alpha=-1.0, maximize=Fa
     zc = zmax - (zmax - zmin) / gr
     zd = zmin + (zmax - zmin) / gr
 
-    Uc, Ud = angular_spectrum(field, zc, wl, sz), angular_spectrum(field, zd, wl, sz)
+    Uc, Ud = angular_spectrum(field, zc, wl, sz, nb=nb), angular_spectrum(field, zd, wl, sz, nb=nb)
     fc = AMP(Uc) if alpha < 0 or alpha >= 1.0 else EIG(Uc, alpha)
     fd = AMP(Ud) if alpha < 0 or alpha >= 1.0 else EIG(Ud, alpha)
     if maximize:
@@ -118,7 +129,7 @@ def find_best_focus(field, wl, sz, zmin, zmax, tol=1e-6, alpha=-1.0, maximize=Fa
             zmax = zd
             zd, fd = zc, fc
             zc = zmax - (zmax - zmin) / gr
-            Uc = angular_spectrum(field, zc, wl, sz)
+            Uc = angular_spectrum(field, zc, wl, sz, nb=nb)
             fc = AMP(Uc) if alpha < 0 or alpha >= 1.0 else EIG(Uc, alpha)
             if maximize:
                 fc *= -1
@@ -126,10 +137,10 @@ def find_best_focus(field, wl, sz, zmin, zmax, tol=1e-6, alpha=-1.0, maximize=Fa
             zmin = zc
             zc, fc = zd, fd
             zd = zmin + (zmax - zmin) / gr
-            Ud = angular_spectrum(field, zd, wl, sz)
+            Ud = angular_spectrum(field, zd, wl, nb=nb)
             fd = AMP(Ud) if alpha < 0 or alpha >= 1.0 else EIG(Ud, alpha)
             if maximize:
                 fd *= -1
 
     z0 = (zmin + zmax) / 2.0
-    return z0, angular_spectrum(field, z0, wl, sz)
+    return z0, angular_spectrum(field, z0, wl, sz, nb=nb)
