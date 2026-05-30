@@ -82,7 +82,7 @@ def angular_spectrum(field, z, wl, sz, nb=0):
     FY = fy.reshape(Nyp, 1)
 
     arg = 1.0 - (wl * FX) ** 2 - (wl * FY) ** 2
-    H = np.exp(1j * k * z * np.sqrt(arg))
+    H = np.exp(1j * k * z * np.sqrt(arg + 0j))
 
     Ft = np.fft.fft2(padded)
     propagated = np.fft.ifft2(Ft * H)
