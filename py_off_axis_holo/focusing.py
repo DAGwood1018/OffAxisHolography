@@ -40,37 +40,57 @@ def angular_spectrum(field, z, wl, sz, nb=0):
     """
     Propagates a complex field to a single plane using the Angular Spectrum Method.
 
-    :param field:       2D complex input field, shape (Ny, Nx).
-    :param z:           Propagation distance.
-    :param wl:          Wavelength of light.
-    :param sz:          Pixel pitch (assumes square pixels).
-    :param nb:          Zero padding to apply to the field. Default is 0.
-    :return:            2D complex propagated field, shape (Ny, Nx).
+    Parameters
+    ----------
+    field : complex128[:, :]
+        Input field, shape (Ny, Nx).
+    z : float
+        Propagation distance.
+    wl : float
+        Wavelength.
+    sz : float
+        Pixel pitch.
+    nb : int, optional
+        Zero-padding width on each side. Default is 0.
+
+    Returns
+    -------
+    complex128[:, :]
+        Propagated field cropped back to the original size.
     """
 
+    Ny, Nx = field.shape
+    k = 2.0 * np.pi / wl
+
+    # Pad field if requested
     if nb > 0:
-        m, n = field.shape
-        input = np.zeros((m + nb//2, n + nb//2), dtype=field.dtype)
-        for i in range(m):
-            for j in range(n):
-                input[i + nb, j + nb] = field[i, j]
+        Nyp = Ny + 2 * nb
+        Nxp = Nx + 2 * nb
+
+        padded = np.zeros((Nyp, Nxp), dtype=field.dtype)
+        padded[nb:nb + Ny, nb:nb + Nx] = field
     else:
-        input = field
+        padded = field
+        Nyp = Ny
+        Nxp = Nx
 
-    Ny, Nx = input.shape
-    k = 2 * np.pi / wl
+    # Frequency coordinates on padded grid
+    fx = np.fft.fftfreq(Nxp, sz)
+    fy = np.fft.fftfreq(Nyp, sz)
 
-    fx = np.fft.fftfreq(Nx, sz)
-    fy = np.fft.fftfreq(Ny, sz)
+    FX = fx.reshape(1, Nxp)
+    FY = fy.reshape(Nyp, 1)
 
-    # Manual broadcasting: reshape to (1, Nx) and (Ny, 1)
-    FX = fx.reshape(1, Nx)
-    FY = fy.reshape(Ny, 1)
-
-    arg = 1.0 - (wl * FX)**2 - (wl * FY)**2
+    arg = 1.0 - (wl * FX) ** 2 - (wl * FY) ** 2
     H = np.exp(1j * k * z * np.sqrt(arg))
-    Ft = np.fft.fft2(field)
-    return np.fft.ifft2(Ft * H)[nb//2:-nb//2, nb//2:-nb//2] if nb>0 else np.fft.ifft2(Ft * H)
+
+    Ft = np.fft.fft2(padded)
+    propagated = np.fft.ifft2(Ft * H)
+
+    # Crop back to original size
+    if nb > 0:
+        return propagated[nb:nb + Ny, nb:nb + Nx]
+    return propagated
 
 @njit(parallel=True, cache=True)
 def scan_focus(field, wl, sz, zmin, zmax, nz, alpha=-1.0, nb=0):
@@ -137,7 +157,7 @@ def find_best_focus(field, wl, sz, zmin, zmax, tol=1e-6, alpha=-1.0, nb=0, maxim
             zmin = zc
             zc, fc = zd, fd
             zd = zmin + (zmax - zmin) / gr
-            Ud = angular_spectrum(field, zd, wl, nb=nb)
+            Ud = angular_spectrum(field, zd, wl, sz, nb=nb)
             fd = AMP(Ud) if alpha < 0 or alpha >= 1.0 else EIG(Ud, alpha)
             if maximize:
                 fd *= -1
