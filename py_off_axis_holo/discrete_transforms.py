@@ -388,7 +388,7 @@ class DFT:
         if self._nb > 0:
             a = self.pad_array(a)
         assert tuple(a.shape) == self.input_shape, "Shape of array must be " + str(self.input_shape)
-        return np.fft.fftshift(self._fft(a, ortho=self._ortho, normalise_idft=False))
+        return np.fft.fftshift(self._fft(a.astype(self._fft.dtype), ortho=self._ortho, normalise_idft=False))
 
     def backwards(self, b):
         """
@@ -401,7 +401,7 @@ class DFT:
         """
 
         assert tuple(b.shape) == self.output_shape, "Shape of array must be " + str(self.output_shape)
-        a = self._ifft(np.fft.ifftshift(b), ortho=self._ortho, normalise_idft=False)
+        a = self._ifft(np.fft.ifftshift(b.astype(self._ifft.dtype)), ortho=self._ortho, normalise_idft=False)
         if self._nb > 0:
             return self.unpad_array(a)
         return a

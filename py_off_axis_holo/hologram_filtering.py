@@ -345,8 +345,8 @@ class OffAxisFilter(DFT):
         :param optimize: Optimize the mask center according to some cost function.
         :param visualize: Show image of mask.
         :param kwargs: Optional arguments to optimization routine.
-        :return: The ROI mask you select for calibration.
-        :rtype: list
+        :return: The ROI mask you select for calibration and tilt
+        :rtype: ndarray, list
         """
 
         self.reset()
@@ -374,17 +374,40 @@ class OffAxisFilter(DFT):
         self._ref_wave = self.construct_reference(freq, self._dims[0], self._dims[1])
 
         # Crop ifft to spatial filter
-        nstack = self.input_shape[0] if self._stacked else 0
         nthreads = self._ifft.threads
         flags = self._ifft.flags
         out_dir = self._ifft.direction
         dtype = self._ifft.dtype
         self._ifft = DiscreteTransform((2*self._filter_radius, 2*self._filter_radius), out_dir, dtype,
-                                       threads=nthreads, nstack=nstack, flags=flags)
+                                       threads=nthreads, nstack=0, flags=flags)
         if visualize:
             self._visualize_roi(fringes)
         return roi, f10
         
+    def set_calibration(self, f10, mask_radius=None):
+        """
+        :param f10: Known tilt of reference beam.
+        :param mask_radius: Override the automatic radius of the mask if not None.
+        :return: The spatial frequency (in units of pixels) the given tilt corresponds to.
+        :rtype: list
+        """
+
+        self.reset()
+        self._filter_radius, self._masks = off_axis_masks(np.zeros(self.input_shape), f10=f10, mask_radius=mask_radius)
+        freq = [f10[1] - self.input_shape[1] / 2, f10[0] - self.input_shape[0] / 2]
+
+        # Construct digital reference wave
+        self._ref_wave = self.construct_reference(freq, self._dims[0], self._dims[1])
+
+        # Crop ifft to spatial filter
+        nthreads = self._ifft.threads
+        flags = self._ifft.flags
+        out_dir = self._ifft.direction
+        dtype = self._ifft.dtype
+        self._ifft = DiscreteTransform((2*self._filter_radius, 2*self._filter_radius), out_dir, dtype,
+                                       threads=nthreads, nstack=0, flags=flags)
+
+        return freq
 
     def reset(self):
         """
