@@ -1,6 +1,8 @@
 import numpy as np
 from numba import njit, prange
 
+from py_off_axis_holo.holography_helpers import angular_spectrum
+
 
 @njit(cache=True)
 def AMP(field):
@@ -34,63 +36,6 @@ def EIG(field, alpha=0.0):
         return -1*np.sum(eigvals)
     else:
         return -1*np.sum(eigvals[0:-kappa])
-
-@njit(cache=True)
-def angular_spectrum(field, z, wl, sz, nb=0):
-    """
-    Propagates a complex field to a single plane using the Angular Spectrum Method.
-
-    Parameters
-    ----------
-    field : complex128[:, :]
-        Input field, shape (Ny, Nx).
-    z : float
-        Propagation distance.
-    wl : float
-        Wavelength.
-    sz : float
-        Pixel pitch.
-    nb : int, optional
-        Zero-padding width on each side. Default is 0.
-
-    Returns
-    -------
-    complex128[:, :]
-        Propagated field cropped back to the original size.
-    """
-
-    Ny, Nx = field.shape
-    k = 2.0 * np.pi / wl
-
-    # Pad field if requested
-    if nb > 0:
-        Nyp = Ny + 2 * nb
-        Nxp = Nx + 2 * nb
-
-        padded = np.zeros((Nyp, Nxp), dtype=field.dtype)
-        padded[nb:nb + Ny, nb:nb + Nx] = field
-    else:
-        padded = field
-        Nyp = Ny
-        Nxp = Nx
-
-    # Frequency coordinates on padded grid
-    fx = np.fft.fftfreq(Nxp, sz)
-    fy = np.fft.fftfreq(Nyp, sz)
-
-    FX = fx.reshape(1, Nxp)
-    FY = fy.reshape(Nyp, 1)
-
-    arg = 1.0 - (wl * FX) ** 2 - (wl * FY) ** 2
-    H = np.exp(1j * k * z * np.sqrt(arg + 0j))
-
-    Ft = np.fft.fft2(padded)
-    propagated = np.fft.ifft2(Ft * H)
-
-    # Crop back to original size
-    if nb > 0:
-        return propagated[nb:nb + Ny, nb:nb + Nx]
-    return propagated
 
 @njit(parallel=True, cache=True)
 def scan_focus(field, wl, sz, zmin, zmax, nz, alpha=-1.0, nb=0):

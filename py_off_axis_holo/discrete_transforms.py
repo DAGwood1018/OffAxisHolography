@@ -313,9 +313,9 @@ class DFT:
         if np.issubdtype(np.dtype(dtype), np.complexfloating) and re:
             dtype = 'float64'
 
-        self._nb = nb
-        self._ortho = ortho
         self._stacked = False
+        self._ortho = ortho
+        self._nb_pad, self._nb_unpad = nb, nb
         self._fft = FFT(padded_shape, threads=threads, dtype=dtype, flags=flags) if not re else \
             DCT(padded_shape, threads=threads, dtype=dtype, flags=flags)
         self._ifft = IFFT(padded_shape, threads=threads, dtype=dtype, flags=flags) if not re else \
@@ -349,31 +349,29 @@ class DFT:
         :rtype: ndarray<complex>
         """
 
+        nb_arr = []
+        for i in range(len(self.input_shape)):
+            nb_arr.append(self._nb_pad)
         if self._stacked:
-            nb = [0]
-            for i in range(1, len(self.input_shape)):
-                nb.append(self._nb)
-        else:
-            nb = self._nb
-        return pad_arr(a, nb)
+            nb_arr[0] = 0
+        return pad_arr(a, nb_arr)
 
-    def unpad_array(self, a):
+    def unpad_array(self, b):
         """
         Removes array padding.
 
-        :param a: Input array.
-        :type a: ndarray<complex>
+        :param b: Input array.
+        :type b: ndarray<complex>
         :return: Padding array.
         :rtype: ndarray<complex>
         """
 
+        nb_arr = []
+        for i in range(len(self.input_shape)):
+            nb_arr.append(self._nb_unpad)
         if self._stacked:
-            nb = [0]
-            for i in range(1, len(self.input_shape)):
-                nb.append(self._nb)
-        else:
-            nb = self._nb
-        return unpad_arr(a, nb)
+            nb_arr[0] = 0
+        return unpad_arr(b, nb_arr)
 
     def forwards(self, a):
         """
@@ -385,7 +383,7 @@ class DFT:
         :rtype: ndarray<complex>
         """
 
-        if self._nb > 0:
+        if self._nb_pad > 0:
             a = self.pad_array(a)
         assert tuple(a.shape) == self.input_shape, "Shape of array must be " + str(self.input_shape)
         return np.fft.fftshift(self._fft(a.astype(self._fft.dtype), ortho=self._ortho, normalise_idft=False))
@@ -402,7 +400,7 @@ class DFT:
 
         assert tuple(b.shape) == self.output_shape, "Shape of array must be " + str(self.output_shape)
         a = self._ifft(np.fft.ifftshift(b.astype(self._ifft.dtype)), ortho=self._ortho, normalise_idft=False)
-        if self._nb > 0:
+        if self._nb_unpad > 0:
             return self.unpad_array(a)
         return a
 

@@ -1,6 +1,11 @@
 import cv2
 import numpy as np
+from numba import njit
 from scipy import signal
+
+
+def wrap_phase(phi):
+    return (phi + np.pi) % (2 * np.pi) - np.pi
 
 
 def format_holo(arr):
@@ -14,24 +19,6 @@ def format_holo(arr):
     diff = arr.max() - arr.min()
     img = cv2.convertScaleAbs(arr, alpha=255.0 / diff, beta=-arr.min() * 255.0 / diff)
     return img.astype('uint8', copy=False)
-
-
-def ref_phase_shift(XY, tilt, k0, sz):
-    """
-    :param XY: The  X, Y meshgrids.
-    :type XY: iterable<ndarray, ndarray>
-    :param tilt: The tilt along x and y
-    :type tilt: iterable<float, float>
-    :param k0: The wavevector of the imaging light.
-    :type k0: float
-    :param sz: The size of the camera pixels.
-    :type sz: float
-    :return: Plane wave with phase shift given by the applied tilt.
-    :rtype: ndarray
-    """
-
-    k = k0 * np.sin(tilt)
-    return np.exp(1j * sz * (k[0] * XY[0] + k[1] * XY[1]))
 
 
 def optimal_tilt(dims, k0, sz):
@@ -54,25 +41,8 @@ def optimal_tilt(dims, k0, sz):
     ky = 2 * np.pi * fy / (M * sz)
     return - np.arcsin(np.array([kx, ky]) / k0)
 
-
-def res_limit(f1, dims, sz):
-    M, N = dims
-    kmax = 2 * np.pi / sz
-    f1 = f1[0] / N * kmax, f1[1] / M * kmax
-    k = np.sqrt(np.sum(np.array(f1) ** 2)) / 3
-    return 2 * np.pi / k
-
-
-def phase_diff(dz, wl, n, n0=0):
-    return 2 * np.pi * (n - n0) * dz / wl
-
-
-def wrap_to_pi(phi):
-    phi = phi - 2 * np.pi * np.floor((phi + np.pi) / (2 * np.pi))
-    return phi
-
-
 def tukey_window(dims, alpha=0.1):
+
     if dims is int or len(dims) == 1:
         return signal.windows.tukey(dims, alpha=alpha)
     window = signal.windows.tukey(dims[0], alpha=alpha)
@@ -146,7 +116,7 @@ def pad_arr(a, nb):
     :param a: Array to pad.
     :type a: ndarray
     :param nb: Number of zeros to pad each array dimension by.
-    :type nb: list<int>
+    :type nb: int, list<int>
     :return: Padded array.
     :rtype: ndarray
     """
@@ -155,9 +125,10 @@ def pad_arr(a, nb):
         if nb <= 0:
             return a
         nb = [nb for _ in range(len(a.shape))]
-    if len(nb) < len(a.shape):
-        for i in range(len(a.shape)-len(nb)):
-            nb.append(0)
+    if type(nb) is list:
+        if len(nb) < len(a.shape):
+            for i in range(len(a.shape)-len(nb)):
+                nb.append(0)
     padding = tuple((nb[i], nb[i]) for i in range(len(a.shape)))
     return np.pad(a, padding, mode='constant')
 
@@ -170,18 +141,20 @@ def unpad_arr(a, nb):
     :param a: Array to unpad.
     :type a: ndarray
     :param nb: Number of zeros to pad array dimensions by.
-    :type nb: int
+    :type nb: int, list<int>
     :return: Unpadded array.
     :rtype: ndarray
     """
 
+    print(nb)
     if type(nb) is int:
         if nb <= 0:
             return a
         nb = [nb for _ in range(len(a.shape))]
-    if len(nb) < len(a.shape):
-        for i in range(len(a.shape)-len(nb)):
-            nb.append(0)
+    elif type(nb) is list:
+        if len(nb) < len(a.shape):
+            for i in range(len(a.shape)-len(nb)):
+                nb.append(0)
 
     slice_indices = []
     for i in range(len(a.shape)):
@@ -189,5 +162,62 @@ def unpad_arr(a, nb):
             slice_indices.append(slice(None))
         else:
             slice_indices.append(slice(nb[i], -nb[i]))
+    print(tuple(slice_indices))
     return a[tuple(slice_indices)]
 
+
+@njit(cache=True)
+def angular_spectrum(field, z, wl, sz, nb=0):
+    """
+    Propagates a complex field to a single plane using the Angular Spectrum Method.
+
+    Parameters
+    ----------
+    field : complex128[:, :]
+        Input field, shape (Ny, Nx).
+    z : float
+        Propagation distance.
+    wl : float
+        Wavelength.
+    sz : float
+        Pixel pitch.
+    nb : int, optional
+        Zero-padding width on each side. Default is 0.
+
+    Returns
+    -------
+    complex128[:, :]
+        Propagated field cropped back to the original size.
+    """
+
+    Ny, Nx = field.shape
+    k = 2.0 * np.pi / wl
+
+    # Pad field if requested
+    if nb > 0:
+        Nyp = Ny + 2 * nb
+        Nxp = Nx + 2 * nb
+
+        padded = np.zeros((Nyp, Nxp), dtype=field.dtype)
+        padded[nb:nb + Ny, nb:nb + Nx] = field
+    else:
+        padded = field
+        Nyp, Nxp = Ny, Nx
+
+    # Frequency coordinates on padded grid
+    fx = np.fft.fftfreq(Nxp, sz)
+    fy = np.fft.fftfreq(Nyp, sz)
+
+    FX = fx.reshape(1, Nxp)
+    FY = fy.reshape(Nyp, 1)
+
+    arg = 1.0 - (wl * FX) ** 2 - (wl * FY) ** 2
+    H = np.exp(1j * k * z * np.sqrt(arg + 0j))
+
+    Ft = np.fft.fft2(padded)
+    propagated = np.fft.ifft2(Ft * H)
+
+    # Crop back to original size
+    if nb > 0:
+        return propagated[nb:nb + Ny, nb:nb + Nx]
+    return propagated
