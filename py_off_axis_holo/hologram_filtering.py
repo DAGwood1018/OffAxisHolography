@@ -1,12 +1,9 @@
 import numpy as np
 import cv2
 
-from scipy.optimize import minimize
-from scipy.ndimage import median_filter
 from skimage.feature import peak_local_max
 from py_off_axis_holo.discrete_transforms import DFT, DiscreteTransform
-from py_off_axis_holo.holography_helpers import gridspace, format_holo, crop_to_mask, unpad_arr, \
-    angular_spectrum, wrap_phase
+from py_off_axis_holo.holography_helpers import format_holo, angular_spectrum
 from warnings import warn
 
 
@@ -149,14 +146,14 @@ class OffAxisFilter(DFT):
         a = self.backwards(b)
         return a
 
-    def _calc_tilt(self, px, py):
+    def _get_tilt(self, px, py):
         """
         Calculates tilt from frequency coordinates. f is
         assumed to be relative to the center coordinates.
 
-        :param fx, fy: Frequency coords of +/-1 order in the form [fx, fy]
+        :param fx, fy: Frequency coords of +/-1 order.
         :type fx, fy: float
-        :return: Tilt in the form [x_tilt, y_tilt]
+        :return: Tilt in radians.
         :rtype: ndarray
         """
 
@@ -166,60 +163,22 @@ class OffAxisFilter(DFT):
         ky = 2 * np.pi * fy
         return np.arcsin(np.array([kx, ky]) / self._k0)
 
-    def _calc_freq(self, tilt):
+    def _get_peak(self, a, b):
         """
-        Calculates frequency coordinates from tilt.
+        Calculates position of peak coordinates from tilt.
 
-        :param tilt: Tilt in the form [x_tilt, y_tilt]
-        :type tilt: array
-        :return: Frequency coords of +/-1 order in the form [fx, fy] given relative to the center coordinates
+        :param a, b: Tilt of the reference beam in radians.
+        :type a, b: float
+        :return: Coords of +/-1 order.
         :rtype: ndarray
         """
 
-        M, N = self._dims
-        k = - self._k0 * np.sin(np.array(tilt))
-        fx = N * self._sz * k[0] / (2 * np.pi)
-        fy = M * self._sz * k[1] / (2 * np.pi)
-        return np.array([fx, fy])
-
-    #
-    # def _min_ksqr(self, freq, phi, X, Y):
-    #     tilt = self._calc_tilt(freq)
-    #     R = ref_phase_shift((X, Y), tilt, self._k0, self._sz)
-    #
-    #     f = R * np.exp(1j * phi)
-    #     xvec = -1j * np.gradient(f, axis=0)
-    #     yvec = -1j * np.gradient(f, axis=1)
-    #     mag = np.absolute(xvec) ** 2 + np.absolute(yvec) ** 2
-    #     return mag.sum()
-    #
-    # def _fit_ref(self, phase, freq, method='TNC', cost='kqr', tol=1e-8, step=None, opts=None):
-    #     print(">>> Aligning Mask to Inferred Tilt...")
-    #     M, N = self._dims
-    #     X, Y = gridspace(M, N, 0, True)
-    #
-    #     if self.masked:
-    #         phase = crop_to_mask(phase, self._masks[0])
-    #         X = crop_to_mask(X, self._masks[0])
-    #         Y = crop_to_mask(Y, self._masks[0])
-    #
-    #     if opts is None:
-    #         opts = {}
-    #     if type(step) is int:
-    #         bounds = [(freq[0] - step, freq[0] + step), (freq[1] - step, freq[1] + step)]
-    #     else:
-    #         bounds = None
-    #     if cost == 'kqr':
-    #         cost_func = self._min_ksqr
-    #     elif cost == 'k':
-    #         cost_func = self._min_k
-    #     else:
-    #         warn('Invalid cost function method given.')
-    #         cost_func = self._min_ksqr
-    #     res = minimize(cost_func, freq, args=(phase, X, Y),
-    #                    method=method, bounds=bounds, tol=tol, options=opts)
-    #     print(">>> Optimization Routine Complete.")
-    #     return np.array(res.x)
+        M, N = self._dims + 2 * self._nb_pad
+        k = self._k0 * np.sin(np.array([a, b]))
+        f = k/(2*np.pi)
+        px = N*self._sz*f[0] + N/2
+        py = M*self._sz*f[1] + M/2
+        return np.array([px, py])
 
     def _fit_ref(self, U, weights=None, tol=1e-12):
         """
@@ -280,6 +239,23 @@ class OffAxisFilter(DFT):
         print(">>> Optimization Complete.")
         a, b, c = coeffs
         return a, b, c
+
+    def _crop_ifft(self, M, N):
+        """
+        :param N:
+        :return:
+        """
+
+        # Crop ifft to spatial filter
+        nthreads = self._ifft.threads
+        flags = self._ifft.flags
+        out_dir = self._ifft.direction
+        dtype = self._ifft.dtype
+        self._ifft = DiscreteTransform((M, N), out_dir, dtype,
+                                       threads=nthreads, nstack=0, flags=flags)
+        self._nb_unpad = (2 * self._nb_pad / self.input_shape[0]) * self.output_shape[0]
+        self._nb_unpad = int(self._nb_unpad // 2)
+        print(self._nb_unpad)
 
     def _visualize_roi(self, fringes):
         Fh = self.forwards(fringes)
@@ -342,6 +318,7 @@ class OffAxisFilter(DFT):
         axes = [1, 2] if self._stacked else [0, 1]
         mm = self.output_shape[axes[0]] - int((pad_m / self.input_shape[axes[0]]) * self.output_shape[axes[0]])
         nn = self.output_shape[axes[0]] - int((pad_n / self.input_shape[axes[1]]) * self.output_shape[axes[1]])
+        print(mm, nn)
 
         if self._stacked:
             return a[:, 0:mm, 0:nn]
@@ -486,17 +463,9 @@ class OffAxisFilter(DFT):
         self._kNA, self._mask, _, _ = off_axis_masks(Fh, fp1=fp1, kNA=kNA)
 
         # Construct digital reference wave
-        a, b = self._calc_tilt(fp1[1], fp1[0])
+        a, b = self._get_tilt(fp1[1], fp1[0])
         self._ref = self.create_ref(self._dims[0], self._dims[1], a, b, 0)
-
-        # Crop ifft to spatial filter
-        nthreads = self._ifft.threads
-        flags = self._ifft.flags
-        out_dir = self._ifft.direction
-        dtype = self._ifft.dtype
-        self._ifft = DiscreteTransform((2 * self._kNA, 2 * self._kNA), out_dir, dtype,
-                                       threads=nthreads, nstack=0, flags=flags)
-        self._nb_unpad = (2*self._nb_pad / self.input_shape[0]) / self.output_shape[0]
+        self._crop_ifft(2 * self._kNA, 2 * self._kNA)
 
         # Attempt to optimize the spatial filter alignment
         if optimize:
@@ -508,12 +477,12 @@ class OffAxisFilter(DFT):
                 da, db, c = self._fit_ref(U, **kwargs)
                 a += da
                 b += db
-                print(da, db, c)
 
                 # Reconstruct mask and digital reference wave
-                fp1 = [a + Fh.shape[1] / 2, b + Fh.shape[0] / 2]
+                fp1 = self._get_peak(a, b)
                 self._kNA, self._mask, _, _ = off_axis_masks(Fh, fp1=fp1, kNA=kNA)
                 self._ref = self.create_ref(self._dims[0], self._dims[1], a, b, c)
+                self._crop_ifft(2 * self._kNA, 2 * self._kNA)
             except RuntimeError:
                 warn("Could not align to tilt.")
 
@@ -539,14 +508,7 @@ class OffAxisFilter(DFT):
 
         # Construct digital reference wave
         self._ref = self.create_ref(self._dims[0], self._dims[1], a, b, c)
-
-        # Crop ifft to spatial filter
-        nthreads = self._ifft.threads
-        flags = self._ifft.flags
-        out_dir = self._ifft.direction
-        dtype = self._ifft.dtype
-        self._ifft = DiscreteTransform((2 * self._kNA, 2 * self._kNA), out_dir, dtype,
-                                       threads=nthreads, nstack=0, flags=flags)
+        self._crop_ifft(2 * self._kNA, 2 * self._kNA)
 
     def reset(self):
         """
@@ -564,6 +526,7 @@ class OffAxisFilter(DFT):
                                       nstack=0, flags=self._ifft.flags)
         self._ifft = DiscreteTransform(dims, self._ifft.direction, self._ifft.dtype, threads=self._ifft.threads,
                                        nstack=0, flags=self._ifft.flags)
+        self._nb_unpad = self._nb_pad
 
 
 

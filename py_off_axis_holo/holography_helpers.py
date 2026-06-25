@@ -4,9 +4,6 @@ from numba import njit
 from scipy import signal
 
 
-def wrap_phase(phi):
-    return (phi + np.pi) % (2 * np.pi) - np.pi
-
 
 def format_holo(arr):
     """
@@ -78,34 +75,7 @@ def ellip_tukey_window(dims, alpha=0.1):
 
     window = ref[idx_from_center]
     window[rho > 1] = 0
-
     return window
-
-
-def crop_to_mask(a, mask):
-    coords = np.argwhere(mask)
-    m_min, n_min = coords.min(axis=0)
-    m_max, n_max = coords.max(axis=0)
-    return a[m_min:m_max + 1, n_min:n_max + 1]
-
-
-def gridspace(M, N, nb=0, center=False):
-    """
-    :param N, M: Shape of 2D arrays to operate on.
-    :type N, M: int
-    :param nb: Number of zeros to pad array dimensions by.
-    :type nb: int
-    :param center: Whether to center meshgrids at 0. Default is 'False'.
-    :type center: bools
-    :return: Meshgrids of X and Y.
-    :rtype: ndarray, ndarray
-    """
-
-    nb = nb if nb > 0 else 0
-    dims = 2 * nb + np.array([M, N])
-    x = np.linspace(-0.5 * N, 0.5 * N, dims[1]) if center else np.linspace(0, N, dims[1])
-    y = np.linspace(-0.5 * M, 0.5 * M, dims[0]) if center else np.linspace(0, M, dims[0])
-    return np.meshgrid(x, y, indexing='xy')
 
 
 def pad_arr(a, nb):
@@ -146,7 +116,6 @@ def unpad_arr(a, nb):
     :rtype: ndarray
     """
 
-    print(nb)
     if type(nb) is int:
         if nb <= 0:
             return a
@@ -162,7 +131,6 @@ def unpad_arr(a, nb):
             slice_indices.append(slice(None))
         else:
             slice_indices.append(slice(nb[i], -nb[i]))
-    print(tuple(slice_indices))
     return a[tuple(slice_indices)]
 
 
