@@ -127,7 +127,7 @@ class OffAxisFilter(DFT):
         self._sqr_padding = (pad_m, pad_n)
         self._ref = np.ones((M, N), dtype=dtype)
         self._mask = np.ones((M, N))
-        self._window_fcn = None
+        self._window = None
         self._kNA = -1
 
     def __call__(self, fringes):
@@ -138,12 +138,20 @@ class OffAxisFilter(DFT):
         :rtype: ndarray
         """
 
+        if self._stacked:
+            assert fringes.ndim == 3, "ndim must be 3 if working with multiple arrays."
+        else:
+            assert fringes.ndim == 2, "ndim must be 2 if working with a single array."
         if not self.calibrated:
+            if self._stacked:
+                self.unstack_arrays()
+                raise RuntimeError("Must calibrate filter before stacking arrays.")
             self.calibrate(fringes)
 
         fringes = fringes.astype(self._fft.dtype)
-        b = self.filter_spectrum(self.forwards(fringes))
-        a = self.backwards(b)
+        b = self.forwards(fringes)
+        bf = self.filter_spectrum(b)
+        a = self.backwards(bf)
         return a
 
     def _get_tilt(self, px, py):
@@ -242,8 +250,10 @@ class OffAxisFilter(DFT):
 
     def _crop_ifft(self, M, N):
         """
-        :param N:
-        :return:
+        Crops ifft to smaller size.
+
+        :param M, N: Dimensions to crop to.
+        :type M, N: int
         """
 
         # Crop ifft to spatial filter
@@ -289,7 +299,7 @@ class OffAxisFilter(DFT):
         """
 
         pad_m, pad_n = self._sqr_padding
-        if pad_m == pad_n:
+        if pad_m == pad_n == 0:
             return a
 
         padding = ((0, 0),(0, pad_m),(0, pad_n)) if self._stacked else ((0, pad_m),(0, pad_n))
@@ -335,8 +345,9 @@ class OffAxisFilter(DFT):
         :rtype: ndarray<complex>
         """
 
-        a = self.fix_aspect_ratio(a) * self._ref
-        return super().forwards(a)
+        ref = np.stack([self._ref for _ in range(self.output_shape[0])]) if self._stacked else self._ref
+        a = self.fix_aspect_ratio(a)
+        return super().forwards(a*ref)
 
     def backwards(self, b):
         """
@@ -348,8 +359,8 @@ class OffAxisFilter(DFT):
         :rtype: ndarray<complex>
         """
 
-        if self._window_fcn is not None:
-            window = np.stack([self._window_fcn for _ in range(self.output_shape[0])]) if self._stacked else self._window_fcn
+        if self._window is not None:
+            window = np.stack([self._window for _ in range(self.output_shape[0])]) if self._stacked else self._window
             a = super().backwards(b*window)
         else:
             a = super().backwards(b)
@@ -372,8 +383,8 @@ class OffAxisFilter(DFT):
         m_min, n_min = coords.min(axis=0)
         m_max, n_max = coords.max(axis=0)
         bf = b[:, m_min:m_max, n_min:n_max] if self._stacked else b[m_min:m_max, n_min:n_max]
-        if self._window_fcn is not None:
-            window = np.stack([self._window_fcn for _ in range(self.output_shape[0])]) if self._stacked else self._window_fcn
+        if self._window is not None:
+            window = np.stack([self._window for _ in range(self.output_shape[0])]) if self._stacked else self._window
             bf *= window
         return bf
 
@@ -392,7 +403,7 @@ class OffAxisFilter(DFT):
         if callable(window_fcn):
             try:
                 out_dims = self.output_shape[1:] if self._stacked else self.output_shape
-                self._window_fcn = window_fcn(out_dims, **kwargs)
+                self._window = window_fcn(out_dims, **kwargs)
                 return True
             except TypeError:
                 warn("Invalid window function provided.")
@@ -427,14 +438,11 @@ class OffAxisFilter(DFT):
         :rtype: ndarray
         """
 
-        if not self.calibrated:
-            self.calibrate(fringes)
-
         ref = self._ref
         self._ref = np.ones_like(ref)
-        dc = self(fringes)
+        dc = self.__call__(fringes)
         self._ref = ref
-        return 2 * self(fringes) / dc
+        return 2 * self.__call__(fringes) / dc
 
     def calibrate(self, fringes, dz=0, kNA=-1, roi=None, optimize=True, visualize=False, **kwargs):
         """
@@ -453,6 +461,7 @@ class OffAxisFilter(DFT):
             self.reset()
         if self._stacked:
             self.unstack_arrays()
+        assert fringes.ndim == 2, "Calibration requires input interferogram of ndim==2."
 
         fringes = fringes.astype(self._fft.dtype)
         Fh = self.forwards(fringes)
@@ -518,7 +527,7 @@ class OffAxisFilter(DFT):
         dims = self.input_shape[1:] if self._stacked else self.input_shape
         self._ref = np.ones((self._dims[0], self._dims[1]), dtype=float)
         self._mask = np.ones((self._dims[0], self._dims[1]))
-        self._window_fcn = None
+        self._window = None
         self._kNA = -1
         self._stacked = False
 

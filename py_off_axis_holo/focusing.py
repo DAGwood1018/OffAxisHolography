@@ -18,7 +18,7 @@ def AMP(field):
 def EIG(field, alpha=0.0):
     """
     :param field: Complex field.
-    :param alpha: Percentage of eigenvalues to throw out. Only necessary if magnification isn't fixed (lensless).
+    :param alpha: Percentage of eigenvalues to throw out. Only necessary if magnification isn't fixed (not telecentric).
     :return: Score related to how in-focus the image is. Minimized for pure amplitude, maximized for pure phase.
     :rtype: float
     """
