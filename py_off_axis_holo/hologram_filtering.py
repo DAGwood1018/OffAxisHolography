@@ -442,7 +442,7 @@ class OffAxisFilter(DFT):
         self._ref = np.ones_like(ref)
         dc = self.__call__(fringes)
         self._ref = ref
-        return dc
+        return np.abs(dc)
 
     def contrast(self, fringes):
         """
@@ -454,7 +454,7 @@ class OffAxisFilter(DFT):
         :rtype: ndarray
         """
 
-        return 2 * self.__call__(fringes) / self.intensity(fringes)
+        return 2 * np.abs(self.__call__(fringes)) / self.intensity(fringes)
 
     def calibrate(self, fringes, dz=0, kNA=-1, roi=None, optimize=True, visualize=False, **kwargs):
         """
