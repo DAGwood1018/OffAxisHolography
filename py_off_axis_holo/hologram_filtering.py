@@ -236,7 +236,7 @@ class OffAxisFilter(DFT):
         else:
             coeffs, *_ = np.linalg.lstsq(A, bvec, rcond=None)
 
-        print(">>> Optimization Complete.")
+        print(">>> Fitting Complete.")
         a, b, c = coeffs
         return a, b, c
 
@@ -255,7 +255,6 @@ class OffAxisFilter(DFT):
                                        threads=nthreads, nstack=0, flags=flags)
         self._nb_unpad = (2 * self._nb_pad / self.input_shape[0]) * self.output_shape[0]
         self._nb_unpad = int(self._nb_unpad // 2)
-        print(self._nb_unpad)
 
     def _visualize_roi(self, fringes):
         Fh = self.forwards(fringes)
@@ -316,9 +315,10 @@ class OffAxisFilter(DFT):
             return a
 
         axes = [1, 2] if self._stacked else [0, 1]
-        mm = self.output_shape[axes[0]] - int((pad_m / self.input_shape[axes[0]]) * self.output_shape[axes[0]])
-        nn = self.output_shape[axes[0]] - int((pad_n / self.input_shape[axes[1]]) * self.output_shape[axes[1]])
-        print(mm, nn)
+        input_shape = np.array(self.input_shape) - 2*self._nb_pad
+        output_shape = np.array(self.output_shape) - 2*self._nb_unpad
+        mm = output_shape[axes[0]] - int((pad_m / input_shape[axes[0]]) * output_shape[axes[0]])
+        nn = output_shape[axes[1]] - int((pad_n / input_shape[axes[1]]) * output_shape[axes[1]])
 
         if self._stacked:
             return a[:, 0:mm, 0:nn]
