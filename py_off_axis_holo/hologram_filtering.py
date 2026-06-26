@@ -428,6 +428,22 @@ class OffAxisFilter(DFT):
         k = self._k0 * np.sin(np.array([a, b]))
         return np.exp(-1j * (k[0] * X + k[1] * Y + self._k0*c*(X**2 + Y**2)))
 
+    def intensity(self, fringes):
+        """
+        Filters for |O|^2+|R|^2 (the DC term).
+
+        :param fringes: Interferogram corresponding to an off-axis hologram.
+        :type fringes: ndarray
+        :return: The DC term of the hologram.
+        :rtype: ndarray
+        """
+
+        ref = self._ref
+        self._ref = np.ones_like(ref)
+        dc = self.__call__(fringes)
+        self._ref = ref
+        return dc
+
     def contrast(self, fringes):
         """
         Estimates the contrast of the hologram.
@@ -438,11 +454,7 @@ class OffAxisFilter(DFT):
         :rtype: ndarray
         """
 
-        ref = self._ref
-        self._ref = np.ones_like(ref)
-        dc = self.__call__(fringes)
-        self._ref = ref
-        return 2 * self.__call__(fringes) / dc
+        return 2 * self.__call__(fringes) / self.intensity(fringes)
 
     def calibrate(self, fringes, dz=0, kNA=-1, roi=None, optimize=True, visualize=False, **kwargs):
         """
