@@ -490,8 +490,8 @@ class OffAxisFilter(DFT):
         :param optimize: Optimize the mask center according to some cost function.
         :param visualize: Show image of mask.
         :param kwargs: Optional arguments to optimization routine.
-        :return: The ROI mask you select for calibration and tilt
-        :rtype: ndarray, list
+        :return: The ROI mask you select for calibration and reference beam fit parameters
+        :rtype: ndarray, float, float, float
         """
 
         if self.calibrated:
@@ -509,8 +509,9 @@ class OffAxisFilter(DFT):
         self._kNA, self._mask, _, _ = off_axis_masks(Fh, fp1=fp1, kNA=kNA)
 
         # Construct digital reference wave
+        c = 0
         a, b = self._get_tilt(fp1[1], fp1[0])
-        self._ref = self.create_ref(self._dims[0], self._dims[1], a, b, 0)
+        self._ref = self.create_ref(self._dims[0], self._dims[1], a, b, c)
         self._crop_ifft(2 * self._kNA, 2 * self._kNA)
 
         # Attempt to optimize the spatial filter alignment
@@ -534,12 +535,12 @@ class OffAxisFilter(DFT):
 
         if visualize:
             self._view_filter(fringes)
-        return roi, fp1
+        return roi, a, b, c
         
-    def set_calibration(self, fp1, c=0, kNA=-1):
+    def set_calibration(self, a, b, c=0, kNA=-1):
         """
-        :param fp1: Known location of peak in Fourier plane (units of pixels).
-        :param c: Coefficient of quadratic phase shift of reference beam. By default it is 0.
+        :param a, b: Known tilt in radians.
+        :param c: Coefficient of quadratic phase shift of reference beam. 0 by default.
         :param kNA: The numerical aperture of the system (in terms of pixels). This determines the radius of the mask.
         If not given, it will be assumed that you aligned system in the most optimal way given location of peak.
         """
@@ -549,8 +550,8 @@ class OffAxisFilter(DFT):
         if self._stacked:
             self.unstack_arrays()
 
+        fp1 = self._get_peak(a, b)
         self._kNA, self._mask, _, _ = off_axis_masks(np.zeros(self.input_shape), fp1=fp1, kNA=kNA)
-        a, b = fp1[1] - self.input_shape[1] / 2, fp1[0] - self.input_shape[0] / 2
 
         # Construct digital reference wave
         self._ref = self.create_ref(self._dims[0], self._dims[1], a, b, c)
