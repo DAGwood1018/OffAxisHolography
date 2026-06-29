@@ -1,8 +1,6 @@
 import numpy as np
 from numba import njit, prange
 
-from py_off_axis_holo.holography_helpers import angular_spectrum
-
 
 @njit(cache=True)
 def AMP(field):
@@ -37,6 +35,62 @@ def EIG(field, alpha=0.0):
     else:
         return -1*np.sum(eigvals[0:-kappa])
 
+@njit(cache=True)
+def propagate(field, z, wl, sz, nb=0):
+    """
+    Propagates a complex field to a single plane using the Angular Spectrum Method.
+
+    Parameters
+    ----------
+    field : complex128[:, :]
+        Input field, shape (Ny, Nx).
+    z : float
+        Propagation distance.
+    wl : float
+        Wavelength.
+    sz : float
+        Pixel pitch.
+    nb : int, optional
+        Zero-padding width on each side. Default is 0.
+
+    Returns
+    -------
+    complex128[:, :]
+        Propagated field cropped back to the original size.
+    """
+
+    Ny, Nx = field.shape
+    k = 2.0 * np.pi / wl
+
+    # Pad field if requested
+    if nb > 0:
+        Nyp = Ny + 2 * nb
+        Nxp = Nx + 2 * nb
+
+        padded = np.zeros((Nyp, Nxp), dtype=field.dtype)
+        padded[nb:nb + Ny, nb:nb + Nx] = field
+    else:
+        padded = field
+        Nyp, Nxp = Ny, Nx
+
+    # Frequency coordinates on padded grid
+    fx = np.fft.fftfreq(Nxp, sz)
+    fy = np.fft.fftfreq(Nyp, sz)
+
+    FX = fx.reshape(1, Nxp)
+    FY = fy.reshape(Nyp, 1)
+
+    arg = 1.0 - (wl * FX) ** 2 - (wl * FY) ** 2
+    H = np.exp(1j * k * z * np.sqrt(arg + 0j))
+
+    Ft = np.fft.fft2(padded)
+    propagated = np.fft.ifft2(Ft * H)
+
+    # Crop back to original size
+    if nb > 0:
+        return propagated[nb:nb + Ny, nb:nb + Nx]
+    return propagated
+
 @njit(parallel=True, cache=True)
 def scan_focus(field, wl, sz, zmin, zmax, nz, alpha=-1.0, nb=0):
     """
@@ -58,7 +112,7 @@ def scan_focus(field, wl, sz, zmin, zmax, nz, alpha=-1.0, nb=0):
     scores = np.empty(nz, dtype=np.float64)
 
     for i in prange(nz):
-        fieldz = angular_spectrum(field, zaxis[i], wl, sz, nb=nb)
+        fieldz = propagate(field, zaxis[i], wl, sz, nb=nb)
         scores[i] = AMP(fieldz) if alpha < 0 or alpha >= 1.0 else EIG(fieldz, alpha)
     return zaxis, scores
 
@@ -83,7 +137,7 @@ def find_best_focus(field, wl, sz, zmin, zmax, tol=1e-6, alpha=-1.0, nb=0, maxim
     zc = zmax - (zmax - zmin) / gr
     zd = zmin + (zmax - zmin) / gr
 
-    Uc, Ud = angular_spectrum(field, zc, wl, sz, nb=nb), angular_spectrum(field, zd, wl, sz, nb=nb)
+    Uc, Ud = propagate(field, zc, wl, sz, nb=nb), propagate(field, zd, wl, sz, nb=nb)
     fc = AMP(Uc) if alpha < 0 or alpha >= 1.0 else EIG(Uc, alpha)
     fd = AMP(Ud) if alpha < 0 or alpha >= 1.0 else EIG(Ud, alpha)
     if maximize:
@@ -94,7 +148,7 @@ def find_best_focus(field, wl, sz, zmin, zmax, tol=1e-6, alpha=-1.0, nb=0, maxim
             zmax = zd
             zd, fd = zc, fc
             zc = zmax - (zmax - zmin) / gr
-            Uc = angular_spectrum(field, zc, wl, sz, nb=nb)
+            Uc = propagate(field, zc, wl, sz, nb=nb)
             fc = AMP(Uc) if alpha < 0 or alpha >= 1.0 else EIG(Uc, alpha)
             if maximize:
                 fc *= -1
@@ -102,10 +156,11 @@ def find_best_focus(field, wl, sz, zmin, zmax, tol=1e-6, alpha=-1.0, nb=0, maxim
             zmin = zc
             zc, fc = zd, fd
             zd = zmin + (zmax - zmin) / gr
-            Ud = angular_spectrum(field, zd, wl, sz, nb=nb)
+            Ud = propagate(field, zd, wl, sz, nb=nb)
             fd = AMP(Ud) if alpha < 0 or alpha >= 1.0 else EIG(Ud, alpha)
             if maximize:
                 fd *= -1
 
     z0 = (zmin + zmax) / 2.0
-    return z0, angular_spectrum(field, z0, wl, sz, nb=nb)
+    return z0, propagate(field, z0, wl, sz, nb=nb)
+

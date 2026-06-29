@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-from numba import njit
 from scipy import signal
 
 
@@ -155,58 +154,3 @@ def unpad_arr(a, nb):
     return a[tuple(slice_indices)]
 
 
-@njit(cache=True)
-def angular_spectrum(field, z, wl, sz, nb=0):
-    """
-    Propagates a complex field to a single plane using the Angular Spectrum Method.
-
-    Parameters
-    ----------
-    field : complex128[:, :]
-        Input field, shape (Ny, Nx).
-    z : float
-        Propagation distance.
-    wl : float
-        Wavelength.
-    sz : float
-        Pixel pitch.
-    nb : int, optional
-        Zero-padding width on each side. Default is 0.
-
-    Returns
-    -------
-    complex128[:, :]
-        Propagated field cropped back to the original size.
-    """
-
-    Ny, Nx = field.shape
-    k = 2.0 * np.pi / wl
-
-    # Pad field if requested
-    if nb > 0:
-        Nyp = Ny + 2 * nb
-        Nxp = Nx + 2 * nb
-
-        padded = np.zeros((Nyp, Nxp), dtype=field.dtype)
-        padded[nb:nb + Ny, nb:nb + Nx] = field
-    else:
-        padded = field
-        Nyp, Nxp = Ny, Nx
-
-    # Frequency coordinates on padded grid
-    fx = np.fft.fftfreq(Nxp, sz)
-    fy = np.fft.fftfreq(Nyp, sz)
-
-    FX = fx.reshape(1, Nxp)
-    FY = fy.reshape(Nyp, 1)
-
-    arg = 1.0 - (wl * FX) ** 2 - (wl * FY) ** 2
-    H = np.exp(1j * k * z * np.sqrt(arg + 0j))
-
-    Ft = np.fft.fft2(padded)
-    propagated = np.fft.ifft2(Ft * H)
-
-    # Crop back to original size
-    if nb > 0:
-        return propagated[nb:nb + Ny, nb:nb + Nx]
-    return propagated
