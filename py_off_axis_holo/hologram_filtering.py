@@ -107,6 +107,20 @@ class OffAxisFilter(DFT):
     def __init__(self, M, N, wl, sz, nb=0, threads=1, dtype='complex128', **kwargs):
         """
         *Using un-normalized FFTs is fine since we are only concerned with the phase information.
+
+        :param M, N: Image dimensions.
+        :type M, N: int
+        :param wl: The wavelength.
+        :type wl: float
+        :param sz: The pixel size.
+        :type sz: float
+        :param nb: Padding to use. Default is 0.
+        :type nb: int
+        :param threads: Number of threads to use. Default is 1.
+        :type threads: int
+        :param dtype: The dtype to use. Default is 'complex128'.
+        :type dtype: string
+        :param kwargs: Additional parameters to create discrete transforms.
         """
 
         # Ensure a 1:1 aspect ratio
@@ -266,7 +280,14 @@ class OffAxisFilter(DFT):
         self._nb_unpad = (2 * self._nb_pad / self.input_shape[0]) * self.output_shape[0]
         self._nb_unpad = int(self._nb_unpad // 2)
 
-    def _visualize_roi(self, fringes):
+    def _view_filter(self, fringes):
+        """
+        Visualize the calibrated filter applied to given interferogram.
+
+        :param fringes: An interferogram.
+        :type fringes: ndarray
+        """
+
         Fh = self.forwards(fringes)
         Fh = format_holo(np.abs(Fh) ** (1 / 4))
 
@@ -280,10 +301,14 @@ class OffAxisFilter(DFT):
 
         if cv2.getWindowProperty('visualize_roi', cv2.WND_PROP_VISIBLE) >= 1:
             cv2.destroyWindow('visualize_roi')
-        return True
 
     @property
     def calibrated(self):
+        """
+        :return: True if filter is calibrated.
+        :rtype: bool
+        """
+
         if self._kNA < 0:
             return False
         return True
@@ -508,7 +533,7 @@ class OffAxisFilter(DFT):
                 warn("Could not align to tilt.")
 
         if visualize:
-            self._visualize_roi(fringes)
+            self._view_filter(fringes)
         return roi, fp1
         
     def set_calibration(self, fp1, c=0, kNA=-1):

@@ -4,7 +4,6 @@ from numba import njit
 from scipy import signal
 
 
-
 def format_holo(arr):
     """
     :param arr: Hologram image.
@@ -38,7 +37,18 @@ def optimal_tilt(dims, k0, sz):
     ky = 2 * np.pi * fy / (M * sz)
     return - np.arcsin(np.array([kx, ky]) / k0)
 
+
 def tukey_window(dims, alpha=0.1):
+    """
+    Create a rectangular Tukey window.
+
+    :param dims: Dimensions of window
+    :type dims: int
+    :param alpha: Size of transition region as a fraction. Default is 0.1.
+    :type alpha: float
+    :return: A Tukey window.
+    :rtype: ndarray
+    """
 
     if dims is int or len(dims) == 1:
         return signal.windows.tukey(dims, alpha=alpha)
@@ -50,6 +60,17 @@ def tukey_window(dims, alpha=0.1):
 
 
 def ellip_tukey_window(dims, alpha=0.1):
+    """
+    Create an elliptical Tukey window.
+
+    :param dims: Dimensions of window
+    :type dims: int
+    :param alpha: Size of transition region as a fraction. Default is 0.1.
+    :type alpha: float
+    :return: An elliptical Tukey window.
+    :rtype: ndarray
+    """
+
     if isinstance(dims, int) or len(dims) == 1:
         n = dims if isinstance(dims, int) else dims[0]
         return signal.windows.tukey(n, alpha=alpha)

@@ -30,7 +30,7 @@ def EIG(field, alpha=0.0):
     U = u / N
     mu = np.mean(U.flatten())
     G = U - mu
-    eigvals = np.linalg.eigvalsh(G @ G.T)
+    eigvals = np.sort(np.linalg.eigvalsh(G @ G.T))
     kappa = int(np.floor(alpha * len(eigvals)))
     if kappa == 0:
         return -1*np.sum(eigvals)
