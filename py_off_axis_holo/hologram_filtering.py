@@ -1,106 +1,9 @@
 import numpy as np
 import cv2
 
-from skimage.feature import peak_local_max
-from py_off_axis_holo.discrete_transforms import DFT, Convolve, DiscreteTransform
-from py_off_axis_holo.holography_helpers import format_holo
-from py_off_axis_holo.focusing import propagate
+from py_off_axis_holo.discrete_transforms import DFT, DiscreteTransform
+from py_off_axis_holo.holography_helpers import format_holo, select_mask_roi, find_peak_in_roi, off_axis_masks
 from warnings import warn
-
-
-def select_mask_roi(Fh):
-    """
-    :param Fh: Fourier transformed interferogram.
-    :type Fh: ndarray
-    :return: ROI you select, the local peak within that ROI
-    :rtype: tuple, ndarray
-    """
-
-    Fh_img = format_holo(Fh)
-    cv2.namedWindow('Masking', cv2.WINDOW_NORMAL)
-    cv2.setWindowTitle('Masking', 'Select Off-axis Order of Interest')
-    while True:
-        ROI = cv2.selectROI('Masking', Fh_img, fromCenter=True)
-        roi_mask = np.zeros(Fh_img.shape)
-        roi_mask[int(ROI[1]):int(ROI[1] + ROI[3]), int(ROI[0]): int(ROI[0] + ROI[2])] = 1
-        if ROI == (0, 0, 0, 0):
-            cv2.destroyWindow('Masking')
-            raise RuntimeError("ROI selection cancelled.")
-
-        peaks = peak_local_max(Fh_img * roi_mask, min_distance=min([ROI[2], ROI[3]]))
-        if len(peaks) == 1:
-            break
-        warn("Failed to identify a single peak. Try a different ROI.")
-
-    f1 = np.array([(peaks[0][0]), (peaks[0][1])])
-    cv2.destroyWindow('Masking')
-    print(f'>>> Selected ROI centered at a tilt of ({f1[0]}, {f1[1]}).')
-    return ROI, f1
-
-def find_peak_in_roi(Fh, ROI):
-    """
-    Finds peak in already existing ROI.
-
-    :param Fh: Fourier transformed interferogram.
-    :type Fh: ndarray
-    :param ROI: The region of interest where phase info is located (x, y, w, h).
-    :type ROI: tuple
-    :return: Location of peak in ROI.
-    :rtype: ndarray
-    """
-
-    Fh_img = format_holo(Fh)
-    while True:
-        roi_mask = np.zeros(Fh_img.shape)
-        roi_mask[int(ROI[1]):int(ROI[1] + ROI[3]), int(ROI[0]): int(ROI[0] + ROI[2])] = 1
-        if ROI == (0, 0, 0, 0):
-            raise RuntimeError("ROI selection cancelled.")
-
-        peaks = peak_local_max(Fh_img * roi_mask, min_distance=min([ROI[2], ROI[3]]))
-        if len(peaks) == 1:
-            break
-        warn("Failed to identify a single peak. Try a different ROI.")
-
-    fp1 = np.array([(peaks[0][0]), (peaks[0][1])])
-    return fp1
-
-def off_axis_masks(Fh, fp1=None, kNA=-1):
-    """
-    Creates the necessary masks for off-axis spatial filtering.
-
-    :param Fh: Fourier transformed interferogram.
-    :type Fh: ndarray
-    :param fp1: Location of off-axis peak. If None will be asked to select ROI.
-    :type fp1: ndarray
-    :param kNA: The numerical aperture of the system (in terms of pixels). This determines the radius of the mask.
-    If not given, it will be assumed that you aligned system in the most optimal way given location of peak.
-    :type kNA: float
-    :return: Used radius, Mask at +1, mask at 0, mask at -1.
-    :rtype: float, tuple<ndarray, ndarray, ndarray>
-    """
-
-    fp1 = np.array(fp1)
-    if fp1 is None:
-        _, fp1 = select_mask_roi(np.abs(Fh) ** (1 / 4))
-    else:
-        assert len(fp1) == 2, "Peak coordinates have the wrong dimensionality."
-        assert fp1[0] < Fh.shape[0] and fp1[1] < Fh.shape[1], "Invalid peak position given."
-
-    cy, cx = Fh.shape[0] / 2, Fh.shape[1] / 2
-    fm1 = Fh.shape - fp1
-    Fy, Fx = np.ogrid[:Fh.shape[0], :Fh.shape[1]]
-    r = np.sqrt(np.sum(np.array([fp1[0] - cy, fp1[1] - cx]) ** 2))
-    if kNA is None or kNA <= 0:
-        r_k = r / 3
-    else:
-        assert kNA < r, "Radius of mask can not exceed distance from image center."
-        r_k = kNA
-
-    r_k = int(np.floor(r_k))
-    mask10 = np.sqrt((Fx - fp1[1]) ** 2 + (Fy - fp1[0]) ** 2) <= r_k
-    mask01 = np.sqrt((Fx - fm1[1]) ** 2 + (Fy - fm1[0]) ** 2) <= r_k
-    mask00 = np.sqrt((Fx - cx) ** 2 + (Fy - cy) ** 2) <= r_k
-    return r_k, mask00, mask10, mask01
 
 
 class OffAxisFilter(DFT):
@@ -375,23 +278,6 @@ class OffAxisFilter(DFT):
         a = self.fix_aspect_ratio(a)
         return super().forwards(a*ref)
 
-    def backwards(self, b):
-        """
-        Inverse Fourier transform
-
-        :param b: Array to transform
-        :type b: ndarray<complex>
-        :return: Transformed array.
-        :rtype: ndarray<complex>
-        """
-
-        if self._window is not None:
-            window = np.stack([self._window for _ in range(self.output_shape[0])]) if self._stacked else self._window
-            a = super().backwards(b*window)
-        else:
-            a = super().backwards(b)
-        return self.restore_aspect_ratio(a)
-
     def filter_spectrum(self, b):
         """
         Crop Fourier plane to the spatial filter mask.
@@ -413,6 +299,54 @@ class OffAxisFilter(DFT):
             window = np.stack([self._window for _ in range(self.output_shape[0])]) if self._stacked else self._window
             bf *= window
         return bf
+
+    def backwards(self, b):
+        """
+        Inverse Fourier transform
+
+        :param b: Array to transform
+        :type b: ndarray<complex>
+        :return: Transformed array.
+        :rtype: ndarray<complex>
+        """
+
+        if self._window is not None:
+            window = np.stack([self._window for _ in range(self.output_shape[0])]) if self._stacked else self._window
+            a = super().backwards(b*window)
+        else:
+            a = super().backwards(b)
+        return self.restore_aspect_ratio(a)
+
+    def propagate(self, field, z):
+        """
+        Implements the angular spectrum method.
+
+        :param field: Complex light field to propagate.
+        :type field: ndarray
+        :param z: The distance to propagate.
+        :type z: float
+        :return: The field propagated to z.
+        :rtype: naddary
+        """
+
+        if self._stacked:
+            Nx, Ny = self.input_shape[2], self.input_shape[1]
+        else:
+            Nx, Ny = self.input_shape[1], self.input_shape[0]
+
+        # Frequency coordinates on padded grid
+        fx = np.fft.fftfreq(Nx, self._sz)
+        fy = np.fft.fftfreq(Ny, self._sz)
+
+        FX = fx.reshape(1, Nx)
+        FY = fy.reshape(Ny, 1)
+
+        arg = 1.0 - (2*np.pi * FX / self._k0) ** 2 - (2*np.pi * FY / self._k0) ** 2
+        V = np.exp(1j * self._k0 * z * np.sqrt(arg + 0j))
+        U = super().forwards(field)
+        if self._stacked:
+            V = np.stack([V.copy() for _ in range(self.input_shape[0])], axis=0)
+        return super().backwards(U*V)
 
     def add_window(self, window_fcn, **kwargs):
         """
@@ -504,9 +438,9 @@ class OffAxisFilter(DFT):
         fringes = fringes.astype(self._fft.dtype)
         Fh = self.forwards(fringes)
         if roi is None:
-            roi, fp1 = select_mask_roi(np.abs(Fh)**(1/4))
+            roi, fp1 = select_mask_roi(np.abs(Fh) ** (1 / 4))
         else:
-            fp1 = find_peak_in_roi(np.abs(Fh)**(1/4), roi)
+            fp1 = find_peak_in_roi(np.abs(Fh) ** (1 / 4), roi)
         self._kNA, self._mask, _, _ = off_axis_masks(Fh, fp1=fp1, kNA=kNA)
 
         # Construct digital reference wave
@@ -520,7 +454,7 @@ class OffAxisFilter(DFT):
             try:
                 U = self(fringes)
                 if dz > 0 or dz < 0:
-                    Uz = propagate(U, dz, 2 * np.pi / self._k0, self._sz)
+                    Uz = self.propagate(U, dz)
                     U = Uz * U.conj()
                 da, db, c = self._fit_ref(U, **kwargs)
                 a += da
@@ -575,52 +509,3 @@ class OffAxisFilter(DFT):
         self._ifft = DiscreteTransform(dims, self._ifft.direction, self._ifft.dtype, threads=self._ifft.threads,
                                        nstack=0, flags=self._ifft.flags)
         self._nb_unpad = self._nb_pad
-
-
-class AngularSpectrum(Convolve):
-
-    def __init__(self, M, N, wl, sz, nb=0, threads=1, dtype='complex128', **kwargs):
-        """
-        :param M, N: Image dimensions.
-        :type M, N: int
-        :param wl: The wavelength.
-        :type wl: float
-        :param sz: The pixel size.
-        :type sz: float
-        :param nb: Padding to use. Default is 0.
-        :type nb: int
-        :param threads: Number of threads to use. Default is 1.
-        :type threads: int
-        :param dtype: The dtype to use. Default is 'complex128'.
-        :type dtype: string
-        :param kwargs: Additional parameters to create discrete transforms.
-        """
-
-        super().__init__((M, N), nb, threads=threads, dtype=dtype, ortho=True, **kwargs)
-        self._wl = wl
-        self._sz = sz
-
-    def _kernel(self, z):
-        """
-        Creates transfer function for angular spectrum method.
-
-        :param z: The distance to propagate.
-        :type z: float
-        :return: The propagated field.
-        :rtype: ndarray
-        """
-
-        if self._stacked:
-            Nx, Ny = self.input_shape[2], self.input_shape[1]
-        else:
-            Nx, Ny = self.input_shape[1], self.input_shape[0]
-
-        # Frequency coordinates on padded grid
-        fx = np.fft.fftfreq(Nx, self._sz)
-        fy = np.fft.fftfreq(Ny, self._sz)
-
-        FX = fx.reshape(1, Nx)
-        FY = fy.reshape(Ny, 1)
-
-        arg = 1.0 - (self._wl * FX) ** 2 - (self._wl * FY) ** 2
-        return np.exp(1j * (2*np.pi/self._wl) * z * np.sqrt(arg + 0j))

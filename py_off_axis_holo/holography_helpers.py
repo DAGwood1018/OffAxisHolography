@@ -1,6 +1,9 @@
+from _warnings import warn
+
 import cv2
 import numpy as np
 from scipy import signal
+from skimage.feature import peak_local_max
 
 
 def format_holo(arr):
@@ -154,3 +157,98 @@ def unpad_arr(a, nb):
     return a[tuple(slice_indices)]
 
 
+def select_mask_roi(Fh):
+    """
+    :param Fh: Fourier transformed interferogram.
+    :type Fh: ndarray
+    :return: ROI you select, the local peak within that ROI
+    :rtype: tuple, ndarray
+    """
+
+    Fh_img = format_holo(Fh)
+    cv2.namedWindow('Masking', cv2.WINDOW_NORMAL)
+    cv2.setWindowTitle('Masking', 'Select Off-axis Order of Interest')
+    while True:
+        ROI = cv2.selectROI('Masking', Fh_img, fromCenter=True)
+        roi_mask = np.zeros(Fh_img.shape)
+        roi_mask[int(ROI[1]):int(ROI[1] + ROI[3]), int(ROI[0]): int(ROI[0] + ROI[2])] = 1
+        if ROI == (0, 0, 0, 0):
+            cv2.destroyWindow('Masking')
+            raise RuntimeError("ROI selection cancelled.")
+
+        peaks = peak_local_max(Fh_img * roi_mask, min_distance=min([ROI[2], ROI[3]]))
+        if len(peaks) == 1:
+            break
+        warn("Failed to identify a single peak. Try a different ROI.")
+
+    f1 = np.array([(peaks[0][0]), (peaks[0][1])])
+    cv2.destroyWindow('Masking')
+    print(f'>>> Selected ROI centered at a tilt of ({f1[0]}, {f1[1]}).')
+    return ROI, f1
+
+
+def find_peak_in_roi(Fh, ROI):
+    """
+    Finds peak in already existing ROI.
+
+    :param Fh: Fourier transformed interferogram.
+    :type Fh: ndarray
+    :param ROI: The region of interest where phase info is located (x, y, w, h).
+    :type ROI: tuple
+    :return: Location of peak in ROI.
+    :rtype: ndarray
+    """
+
+    Fh_img = format_holo(Fh)
+    while True:
+        roi_mask = np.zeros(Fh_img.shape)
+        roi_mask[int(ROI[1]):int(ROI[1] + ROI[3]), int(ROI[0]): int(ROI[0] + ROI[2])] = 1
+        if ROI == (0, 0, 0, 0):
+            raise RuntimeError("ROI selection cancelled.")
+
+        peaks = peak_local_max(Fh_img * roi_mask, min_distance=min([ROI[2], ROI[3]]))
+        if len(peaks) == 1:
+            break
+        warn("Failed to identify a single peak. Try a different ROI.")
+
+    fp1 = np.array([(peaks[0][0]), (peaks[0][1])])
+    return fp1
+
+
+def off_axis_masks(Fh, fp1=None, kNA=-1):
+    """
+    Creates the necessary masks for off-axis spatial filtering.
+
+    :param Fh: Fourier transformed interferogram.
+    :type Fh: ndarray
+    :param fp1: Location of off-axis peak. If None will be asked to select ROI.
+    :type fp1: ndarray
+    :param kNA: The numerical aperture of the system (in terms of pixels). This determines the radius of the mask.
+    If not given, it will be assumed that you aligned system in the most optimal way given location of peak.
+    :type kNA: float
+    :return: Used radius, Mask at +1, mask at 0, mask at -1.
+    :rtype: float, tuple<ndarray, ndarray, ndarray>
+    """
+
+    fp1 = np.array(fp1)
+    if fp1 is None:
+        _, fp1 = select_mask_roi(np.abs(Fh) ** (1 / 4))
+    else:
+        assert len(fp1) == 2, "Peak coordinates have the wrong dimensionality."
+        assert fp1[0] < Fh.shape[0] and fp1[1] < Fh.shape[1], "Invalid peak position given."
+
+    cy, cx = Fh.shape[0] / 2, Fh.shape[1] / 2
+    fm1 = Fh.shape - fp1
+    Fy, Fx = np.ogrid[:Fh.shape[0], :Fh.shape[1]]
+    r = np.sqrt(np.sum(np.array([fp1[0] - cy, fp1[1] - cx]) ** 2))
+    if kNA is None or kNA <= 0:
+        r_k = r / 3
+    else:
+        assert kNA < r, "Radius of mask can not exceed distance from image center."
+        r_k = kNA
+
+    r_k = int(np.floor(r_k))
+    mask10 = np.sqrt((Fx - fp1[1]) ** 2 + (Fy - fp1[0]) ** 2) <= r_k
+    mask01 = np.sqrt((Fx - fm1[1]) ** 2 + (Fy - fm1[0]) ** 2) <= r_k
+    mask00 = np.sqrt((Fx - cx) ** 2 + (Fy - cy) ** 2) <= r_k
+    return r_k, mask00, mask10, mask01

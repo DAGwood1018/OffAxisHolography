@@ -451,25 +451,4 @@ class DFT:
         return True
 
 
-class Convolve(DFT, ABC):
-
-    @abstractmethod
-    def _kernel(self, *args):
-        ...
-
-    def __call__(self, u, *args):
-        """
-        :param u: Input array.
-        :type u: ndarray
-        :param args: Arguments for convolution kernel.
-        :return: Convolution.
-        :rtype: ndarray
-        """
-
-        U = self.forwards(u)
-        V = self._kernel(*args)
-        if self._stacked:
-            V = np.stack([V.copy() for _ in range(self.input_shape[0])], axis=0)
-        return self.backwards(U*V)
-
 
