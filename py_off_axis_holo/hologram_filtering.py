@@ -1,9 +1,10 @@
+from warnings import warn
 import numpy as np
 import cv2
 
 from py_off_axis_holo.discrete_transforms import DFT, DiscreteTransform
+from py_off_axis_holo.fourier_propagators import AngularSpectrum
 from py_off_axis_holo.holography_helpers import format_holo, select_mask_roi, find_peak_in_roi, off_axis_masks
-from warnings import warn
 
 
 class OffAxisFilter(DFT):
@@ -317,37 +318,6 @@ class OffAxisFilter(DFT):
             a = super().backwards(b)
         return self.restore_aspect_ratio(a)
 
-    def propagate(self, field, z):
-        """
-        Implements the angular spectrum method.
-
-        :param field: Complex light field to propagate.
-        :type field: ndarray
-        :param z: The distance to propagate.
-        :type z: float
-        :return: The field propagated to z.
-        :rtype: naddary
-        """
-
-        if self._stacked:
-            Nx, Ny = self.input_shape[2], self.input_shape[1]
-        else:
-            Nx, Ny = self.input_shape[1], self.input_shape[0]
-
-        # Frequency coordinates on padded grid
-        fx = np.fft.fftfreq(Nx, self._sz)
-        fy = np.fft.fftfreq(Ny, self._sz)
-
-        FX = fx.reshape(1, Nx)
-        FY = fy.reshape(Ny, 1)
-
-        arg = 1.0 - (2*np.pi * FX / self._k0) ** 2 - (2*np.pi * FY / self._k0) ** 2
-        V = np.exp(1j * self._k0 * z * np.sqrt(arg + 0j))
-        U = super().forwards(field)
-        if self._stacked:
-            V = np.stack([V.copy() for _ in range(self.input_shape[0])], axis=0)
-        return super().backwards(U*V)
-
     def add_window(self, window_fcn, **kwargs):
         """
         Add window to use as bandpass filter in Fourier plane.
@@ -454,8 +424,11 @@ class OffAxisFilter(DFT):
             try:
                 U = self(fringes)
                 if dz > 0 or dz < 0:
-                    Uz = self.propagate(U, dz)
+                    prop = AngularSpectrum(U.shape[0], U.shape[1], 2 * np.pi / self._k0, self._sz, nb=self._nb_pad)
+                    Uz = prop(U, dz)
                     U = Uz * U.conj()
+                    del prop
+
                 da, db, c = self._fit_ref(U, **kwargs)
                 a += da
                 b += db

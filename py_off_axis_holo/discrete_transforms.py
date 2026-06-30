@@ -1,6 +1,5 @@
 import pyfftw
 import numpy as np
-from abc import ABC, abstractmethod
 
 from py_off_axis_holo.holography_helpers import pad_arr, unpad_arr
 
@@ -449,6 +448,5 @@ class DFT:
         self._ifft = DiscreteTransform(dims_out, out_dir, self._ifft.dtype,
                                        threads=self._ifft.threads, nstack=0, flags=self._ifft.flags)
         return True
-
 
 
