@@ -275,7 +275,7 @@ class OffAxisFilter(DFT):
         :rtype: ndarray<complex>
         """
 
-        ref = np.stack([self._ref for _ in range(self.output_shape[0])]) if self._stacked else self._ref
+        ref = np.broadcast_to(self._ref, self.input_shape) if self._stacked else self._ref
         a = self.fix_aspect_ratio(a)
         return super().forwards(a*ref)
 
@@ -289,17 +289,13 @@ class OffAxisFilter(DFT):
         :rtype: ndarray
         """
 
-        mask = np.stack([self._mask for _ in range(self.input_shape[0])]) if self._stacked else self._mask
-        b *= mask
+        mask = np.broadcast_to(self._mask, self.input_shape) if self._stacked else self._mask
+        bf = b*mask
 
         coords = np.argwhere(self._mask)
         m_min, n_min = coords.min(axis=0)
         m_max, n_max = coords.max(axis=0)
-        bf = b[:, m_min:m_max, n_min:n_max] if self._stacked else b[m_min:m_max, n_min:n_max]
-        if self._window is not None:
-            window = np.stack([self._window for _ in range(self.output_shape[0])]) if self._stacked else self._window
-            bf *= window
-        return bf
+        return bf[:, m_min:m_max, n_min:n_max] if self._stacked else b[m_min:m_max, n_min:n_max]
 
     def backwards(self, b):
         """
@@ -312,10 +308,9 @@ class OffAxisFilter(DFT):
         """
 
         if self._window is not None:
-            window = np.stack([self._window for _ in range(self.output_shape[0])]) if self._stacked else self._window
-            a = super().backwards(b*window)
-        else:
-            a = super().backwards(b)
+            window = np.broadcast_to(self._window, self.input_shape) if self._stacked else self._window
+            b *= window
+        a = super().backwards(b)
         return self.restore_aspect_ratio(a)
 
     def add_window(self, window_fcn, **kwargs):
