@@ -45,7 +45,7 @@ class OffAxisFilter(DFT):
 
         self._sqr_padding = (pad_m, pad_n)
         self._ref = np.ones((M, N), dtype=dtype)
-        self._mask = np.ones((M, N))
+        self._mask = np.ones((self.input_shape[0], self.input_shape[1]), dtype=dtype)
         self._window = None
         self._kNA = -1
 
@@ -86,6 +86,7 @@ class OffAxisFilter(DFT):
 
         M, N = self._dims + 2*self._nb_pad
         fx, fy = (px - N/2) / (N*self._sz), (py - M/2) / (M*self._sz)
+
         kx = 2 * np.pi * fx
         ky = 2 * np.pi * fy
         return np.arcsin(np.array([kx, ky]) / self._k0)
@@ -103,6 +104,7 @@ class OffAxisFilter(DFT):
         M, N = self._dims + 2 * self._nb_pad
         k = self._k0 * np.sin(np.array([a, b]))
         f = k/(2*np.pi)
+
         px = N*self._sz*f[0] + N/2
         py = M*self._sz*f[1] + M/2
         return np.array([px, py])
@@ -260,10 +262,7 @@ class OffAxisFilter(DFT):
         mm = output_shape[axes[0]] - int((pad_m / input_shape[axes[0]]) * output_shape[axes[0]])
         nn = output_shape[axes[1]] - int((pad_n / input_shape[axes[1]]) * output_shape[axes[1]])
 
-        if self._stacked:
-            return a[:, 0:mm, 0:nn]
-        else:
-            return a[0:mm, 0:nn]
+        return a[:, 0:mm, 0:nn] if self._stacked else a[0:mm, 0:nn]
 
     def forwards(self, a):
         """
@@ -275,7 +274,8 @@ class OffAxisFilter(DFT):
         :rtype: ndarray<complex>
         """
 
-        ref = np.broadcast_to(self._ref, self.input_shape) if self._stacked else self._ref
+        ref = np.broadcast_to(self._ref, (self.input_shape[0], self._dims[0], self._dims[1])) \
+            if self._stacked else self._ref
         a = self.fix_aspect_ratio(a)
         return super().forwards(a*ref)
 
@@ -289,13 +289,15 @@ class OffAxisFilter(DFT):
         :rtype: ndarray
         """
 
-        mask = np.broadcast_to(self._mask, self.input_shape) if self._stacked else self._mask
+        mask = np.broadcast_to(self._mask, self.input_shape) \
+            if self._stacked else self._mask
         bf = b*mask
 
         coords = np.argwhere(self._mask)
         m_min, n_min = coords.min(axis=0)
         m_max, n_max = coords.max(axis=0)
-        return bf[:, m_min:m_max, n_min:n_max] if self._stacked else b[m_min:m_max, n_min:n_max]
+        return bf[:, m_min:m_max, n_min:n_max] \
+            if self._stacked else b[m_min:m_max, n_min:n_max]
 
     def backwards(self, b):
         """
@@ -308,7 +310,8 @@ class OffAxisFilter(DFT):
         """
 
         if self._window is not None:
-            window = np.broadcast_to(self._window, self.input_shape) if self._stacked else self._window
+            window = np.broadcast_to(self._window, self.output_shape) \
+                if self._stacked else self._window
             b *= window
         a = super().backwards(b)
         return self.restore_aspect_ratio(a)
@@ -419,7 +422,8 @@ class OffAxisFilter(DFT):
             try:
                 U = self(fringes)
                 if dz > 0 or dz < 0:
-                    prop = AngularSpectrum(U.shape[0], U.shape[1], 2 * np.pi / self._k0, self._sz, nb=self._nb_pad)
+                    prop = AngularSpectrum(U.shape[0], U.shape[1],
+                                           2 * np.pi / self._k0, self._sz, nb=self._nb_pad)
                     Uz = prop(U, dz)
                     U = Uz * U.conj()
                     del prop
