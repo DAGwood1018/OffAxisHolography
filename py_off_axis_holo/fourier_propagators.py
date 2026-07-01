@@ -22,7 +22,7 @@ class Convolve(DFT, ABC):
         U = self.forwards(u)
         V = self._kernel(*args)
         if self._stacked:
-            V = np.stack([V.copy() for _ in range(self.input_shape[0])], axis=0)
+            V = np.broadcast_to(V, U.shape)
         return self.backwards(U*V)
 
 
@@ -47,18 +47,17 @@ class AngularSpectrum(Convolve):
         :param kwargs: Additional parameters to create discrete transforms.
         """
 
-        super().__init__((M, N), nb, threads=threads, dtype=dtype, ortho=True, **kwargs)
-        self._wl = wl
-        self._sz = sz
+        super().__init__((M, N), nb, threads=threads, dtype=dtype, **kwargs)
 
         # Frequency coordinates on padded grid
-        fx = np.fft.fftfreq(self.input_shape[1], self._sz)
-        fy = np.fft.fftfreq(self.input_shape[0], self._sz)
+        fx = np.fft.fftshift(np.fft.fftfreq(self.input_shape[1], sz))
+        fy = np.fft.fftshift(np.fft.fftfreq(self.input_shape[0], sz))
 
-        self._FX = fx.reshape(1, self.input_shape[1])
-        self._FY = fy.reshape(self.input_shape[0], 1)
+        FX = fx.reshape(1, self.input_shape[1])
+        FY = fy.reshape(self.input_shape[0], 1)
+        self._kz = 2*np.pi * np.sqrt(1.0 - (wl * FX) ** 2 - (wl * FY) ** 2) / wl
 
-    def _kernel(self, z):
+    def _kernel(self, z, evanescent=True):
         """
         Creates angular spectrum transfer function
 
@@ -68,6 +67,5 @@ class AngularSpectrum(Convolve):
         :rtype: ndarray
         """
 
-        k = 2*np.pi / self._wl
-        arg = 1.0 - (self._wl * self._FX) ** 2 - (self._wl * self._FY) ** 2
-        return np.exp(1j * k * z * np.sqrt(arg + 0j))
+        kz = self._kz if evanescent else np.maximum(self._kz, 0)
+        return np.exp(1j * kz * z)
