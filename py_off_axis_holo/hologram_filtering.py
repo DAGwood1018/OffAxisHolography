@@ -4,7 +4,7 @@ import cv2
 
 from py_off_axis_holo.discrete_transforms import DFT, DiscreteTransform
 from py_off_axis_holo.fourier_propagators import AngularSpectrum
-from py_off_axis_holo.holography_helpers import format_holo, select_mask_roi, find_peak_in_roi, off_axis_masks
+from py_off_axis_holo.holography_helpers import select_mask_roi, find_peak_in_roi, off_axis_masks, view_filter
 
 
 class OffAxisFilter(DFT):
@@ -187,28 +187,6 @@ class OffAxisFilter(DFT):
                                        threads=nthreads, nstack=0, flags=flags)
         self._nb_unpad = (2 * self._nb_pad / self.input_shape[0]) * self.output_shape[0]
         self._nb_unpad = int(self._nb_unpad // 2)
-
-    def _view_filter(self, fringes):
-        """
-        Visualize the calibrated filter applied to given interferogram.
-
-        :param fringes: An interferogram.
-        :type fringes: ndarray
-        """
-
-        Fh = self.forwards(fringes)
-        Fh = format_holo(np.abs(Fh) ** (1 / 4))
-
-        cv2.namedWindow('visualize_roi', cv2.WINDOW_NORMAL)
-        cv2.imshow('visualize_roi', Fh)
-
-        cv2.waitKey(1500)
-        Fh *= self._mask.astype('uint8')
-        cv2.imshow('visualize_roi', Fh)
-        cv2.waitKey(4000)
-
-        if cv2.getWindowProperty('visualize_roi', cv2.WND_PROP_VISIBLE) >= 1:
-            cv2.destroyWindow('visualize_roi')
 
     @property
     def calibrated(self):
@@ -407,9 +385,9 @@ class OffAxisFilter(DFT):
         fringes = fringes.astype(self._fft.dtype)
         Fh = self.forwards(fringes)
         if roi is None:
-            roi, fp1 = select_mask_roi(np.abs(Fh) ** (1 / 4))
+            roi, fp1 = select_mask_roi(Fh)
         else:
-            fp1 = find_peak_in_roi(np.abs(Fh) ** (1 / 4), roi)
+            fp1 = find_peak_in_roi(Fh, roi)
         self._kNA, self._mask, _, _ = off_axis_masks(Fh, fp1=fp1, kNA=kNA)
 
         # Construct digital reference wave
@@ -443,7 +421,7 @@ class OffAxisFilter(DFT):
 
         self._fit_params = (a, b, c)
         if visualize:
-            self._view_filter(fringes)
+            view_filter(self.forwards(fringes), self._mask)
         return roi, a, b, c
         
     def set_calibration(self, a, b, c=0, kNA=-1):

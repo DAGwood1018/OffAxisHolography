@@ -34,7 +34,7 @@ def calc_residues(wrapped_phase):
     return residues
 
 
-def residue_density(residues, M, N, sigma=3.0):
+def residue_density(residues, sigma=3.0):
     """
     Build a smooth per-pixel "residue density" map used to order the
     flood-fill integration: pixels far from any residue (clean, reliable
@@ -49,7 +49,6 @@ def residue_density(residues, M, N, sigma=3.0):
     Parameters
     ----------
     residues : (M-1, N-1) int array
-    M, N : output map shape
     sigma : Gaussian blur radius in pixels. 0 disables blurring (density is
         then just "is this pixel a corner of a nonzero residue loop").
 
@@ -57,6 +56,9 @@ def residue_density(residues, M, N, sigma=3.0):
     -------
     density : (M, N) float array, >= 0.
     """
+
+    assert residues.ndim == 2, "Expecting 2D map of phase residues."
+    M, N = residues.shape[0]+1, residues.shape[1]+1
     density = np.zeros((M, N), dtype=np.float64)
     absres = np.abs(residues).astype(np.float64)
     density[:-1, :-1] += absres

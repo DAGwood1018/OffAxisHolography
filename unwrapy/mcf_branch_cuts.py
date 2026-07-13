@@ -270,21 +270,11 @@ def mcf_unwrap(wrapped_phase, residues, cost_h, cost_v, ref=(0, 0), cap=None,
     k_h, k_v = flow_to_jumps(net_flow, shape, M, N)
 
     if density_sigma is None:
-        density = None
         unwrapped = floodfill(wrapped_phase, k_h, k_v, ref=ref)
     else:
-        density = residue_density(residues, M, N, sigma=density_sigma)
+        density = residue_density(residues, sigma=density_sigma)
         unwrapped = biased_floodfill(wrapped_phase, k_h, k_v, density, ref=ref)
-
-    n_cut = int(np.count_nonzero(k_h) + np.count_nonzero(k_v))
-    total_cost = int(
-        np.sum(np.abs(k_h) * cost_h) + np.sum(np.abs(k_v) * cost_v)
-    )
-    info = {
-        "k_h": k_h, "k_v": k_v, "n_cut_edges": n_cut, "total_cost": total_cost,
-        "cap": used_cap, "density": density,
-    }
-    return unwrapped, info
+    return unwrapped, k_h, k_v
 
 
 # --------------------------------------------------------------------------

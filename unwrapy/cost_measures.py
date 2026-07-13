@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def calc_stat_costs(contrast, nlevels=100, eps=1e-6):
+def calc_stat_costs(contrast, nlevels=2**16 - 1, eps=1e-6):
     """
     Statistically-motivated integer edge costs, replacing the ad hoc
     "-log(contrast)" transform with the actual interferometric phase-noise
@@ -65,7 +65,7 @@ def calc_stat_costs(contrast, nlevels=100, eps=1e-6):
     return cost_h, cost_v
 
 
-def calc_log_costs(contrast, nlevels=100, eps=10 ** (-9)):
+def calc_log_costs(contrast, nlevels=2**16 - 1, eps=10 ** (-9)):
     """
     Compute integer edge costs for MCF phase unwrapping
     using fringe contrast (visibility) as the coherence measure.
@@ -115,7 +115,7 @@ def calc_log_costs(contrast, nlevels=100, eps=10 ** (-9)):
     return cost_h, cost_v
 
 
-def calc_lin_costs(contrast, nlevels=100):
+def calc_lin_costs(contrast, nlevels=2**16 - 1):
     """
     Compute integer edge costs for MCF phase unwrapping
     using fringe contrast (visibility) as the coherence measure.

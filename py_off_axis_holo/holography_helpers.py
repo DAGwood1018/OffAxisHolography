@@ -156,6 +156,33 @@ def unpad_arr(a, nb):
     return a[tuple(slice_indices)]
 
 
+def view_filter(Fh, mask):
+    """
+    Visualize the calibrated filter applied to given interferogram.
+
+    :param Fh: Fourier transformed interferogram.
+    :type Fh: ndarray
+    :param mask: The spatial filter to apply in Fourier plane.
+    :type mask: ndarray
+    :return: True if window is destroyed correctly.
+    :rtype: bool
+    """
+
+    Fh_img = format_holo(np.abs(Fh) ** (1 / 4))
+
+    cv2.namedWindow('visualize_roi', cv2.WINDOW_NORMAL)
+    cv2.imshow('visualize_roi', Fh)
+
+    cv2.waitKey(1500)
+    Fh *= mask.astype('uint8')
+    cv2.imshow('visualize_roi', Fh_img)
+    cv2.waitKey(4000)
+
+    if cv2.getWindowProperty('visualize_roi', cv2.WND_PROP_VISIBLE) >= 1:
+        cv2.destroyWindow('visualize_roi')
+        return True
+    return False
+
 def select_mask_roi(Fh):
     """
     :param Fh: Fourier transformed interferogram.
@@ -164,7 +191,7 @@ def select_mask_roi(Fh):
     :rtype: tuple, ndarray
     """
 
-    Fh_img = format_holo(Fh)
+    Fh_img = format_holo(np.abs(Fh)**(1/4))
     cv2.namedWindow('Masking', cv2.WINDOW_NORMAL)
     cv2.setWindowTitle('Masking', 'Select Off-axis Order of Interest')
     while True:
@@ -198,7 +225,7 @@ def find_peak_in_roi(Fh, ROI):
     :rtype: ndarray
     """
 
-    Fh_img = format_holo(Fh)
+    Fh_img = format_holo(np.abs(Fh)**(1/4))
     while True:
         roi_mask = np.zeros(Fh_img.shape)
         roi_mask[int(ROI[1]):int(ROI[1] + ROI[3]), int(ROI[0]): int(ROI[0] + ROI[2])] = 1
@@ -231,7 +258,7 @@ def off_axis_masks(Fh, fp1=None, kNA=-1):
 
     fp1 = np.array(fp1)
     if fp1 is None:
-        _, fp1 = select_mask_roi(np.abs(Fh) ** (1 / 4))
+        _, fp1 = select_mask_roi(Fh)
     else:
         assert len(fp1) == 2, "Peak coordinates have the wrong dimensionality."
         assert fp1[0] < Fh.shape[0] and fp1[1] < Fh.shape[1], "Invalid peak position given."
