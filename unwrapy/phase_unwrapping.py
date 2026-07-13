@@ -1,224 +1,143 @@
+import heapq
+import itertools
+from collections import deque
 import numpy as np
 from numba import njit
 
 
-def wrap_to_pi(phase):
+@njit(cache=True)
+def wrap_to_pi(x):
     """
     Wrap phase to (-pi, pi].
     """
-    return (phase + np.pi) % (2 * np.pi) - np.pi
+    return (x + np.pi) % (2 * np.pi) - np.pi
 
-
-def calc_residues(wrapped_phase):
-    """
-    Compute phase residues using the standard 2×2 circulation.
-
-    Parameters
-    ----------
-    wrapped_phase : (M, N) ndarray
-        Wrapped phase image in radians.
-
-    Returns
-    -------
-    residues : (M-1, N-1) ndarray of int8
-        Values are {-1, 0, +1}.
-    """
-
-    p00 = wrapped_phase[:-1, :-1]
-    p01 = wrapped_phase[:-1, 1:]
-    p11 = wrapped_phase[1:, 1:]
-    p10 = wrapped_phase[1:, :-1]
-
-    d1 = wrap_to_pi(p01 - p00)
-    d2 = wrap_to_pi(p11 - p01)
-    d3 = wrap_to_pi(p10 - p11)
-    d4 = wrap_to_pi(p00 - p10)
-
-    residues = np.rint((d1 + d2 + d3 + d4) / (2 * np.pi)).astype(np.int8)
-    return residues
-
-
-def calc_costs(wrapped_phase, coherence, cost_scale=1000.0, eps=1e-6):
-    """
-    Compute SNAPHU-inspired edge costs for MCF phase unwrapping.
-
-    Parameters
-    ----------
-    wrapped_phase : (M, N) array
-        Wrapped phase in radians.
-
-    coherence : (M, N) array
-        Coherence or proportional contrast (0..1).
-
-    cost_scale : float
-        Scaling factor for integer costs.
-
-    eps : float
-        Numerical stability.
-
-    Returns
-    -------
-    cost_x : (M, N-1) int32
-    cost_y : (M-1, N) int32
-    """
-
-    # ------------------------------------------------------------
-    # 1. coherence → phase variance (single-look model)
-    # ------------------------------------------------------------
-
-    gamma = np.clip(coherence, eps, 0.9999)
-
-    sigma2 = (1.0 - gamma**2) / (2.0 * gamma**2)
-
-    # ------------------------------------------------------------
-    # 2. edge variances (sum of independent contributions)
-    # ------------------------------------------------------------
-
-    sigma2_x = sigma2[:, :-1] + sigma2[:, 1:]
-    sigma2_y = sigma2[:-1, :] + sigma2[1:, :]
-
-    # ------------------------------------------------------------
-    # 3. wrapped phase differences on edges
-    # ------------------------------------------------------------
-
-    dphi_x = wrap_to_pi(wrapped_phase[:, 1:] - wrapped_phase[:, :-1])
-    dphi_y = wrap_to_pi(wrapped_phase[1:, :] - wrapped_phase[:-1, :])
-
-    # ------------------------------------------------------------
-    # 4. negative log-likelihood cost (k = 0 assumption)
-    # ------------------------------------------------------------
-
-    cost_x = (dphi_x ** 2) / (2.0 * sigma2_x + eps)
-    cost_y = (dphi_y ** 2) / (2.0 * sigma2_y + eps)
-
-    # ------------------------------------------------------------
-    # 5. normalize for solver stability
-    # ------------------------------------------------------------
-
-    mean_cost = 0.5 * (cost_x.mean() + cost_y.mean() + eps)
-
-    cost_x /= mean_cost
-    cost_y /= mean_cost
-
-    # ------------------------------------------------------------
-    # 6. scale to integer costs (OR-Tools requirement)
-    # ------------------------------------------------------------
-
-    cost_x = np.maximum(1, np.rint(cost_scale * cost_x)).astype(np.int32)
-    cost_y = np.maximum(1, np.rint(cost_scale * cost_y)).astype(np.int32)
-
-    return cost_x, cost_y
-
-
-@njit
+@njit(cache=True)
 def wrap_diff(a, b):
     """
     Wrap difference to (-pi, pi].
     """
     d = a - b
-    return (d + np.pi) % (2 * np.pi) - np.pi
+    return wrap_to_pi(d)
 
 
-@njit
-def floodfill_unwrap(wrapped_phase, cut_x, cut_y):
+def floodfill(wrapped_phase, k_h, k_v, ref=(0, 0)):
     """
-    Flood-fill phase unwrapping using branch cuts.
-
-    Parameters
-    ----------
-    wrapped_phase : (M, N) float64
-    cut_x : (M, N-1) bool
-    cut_y : (M-1, N) bool
-
-    Returns
-    -------
-    unwrapped : (M, N) float64
+    Flood-fill integration of the curl-free corrected gradient field.
     """
 
     M, N = wrapped_phase.shape
     unwrapped = np.zeros((M, N), dtype=np.float64)
-    visited = np.zeros((M, N), dtype=np.uint8)
+    visited = np.zeros((M, N), dtype=bool)
 
-    # ------------------------------------------------------------
-    # manual stack (Numba-safe)
-    # ------------------------------------------------------------
-    stack_r = np.empty(M * N, dtype=np.int32)
-    stack_c = np.empty(M * N, dtype=np.int32)
-    top = 0
+    ri, rj = ref
+    unwrapped[ri, rj] = wrapped_phase[ri, rj]
+    visited[ri, rj] = True
 
-    # start at (0,0)
-    stack_r[top] = 0
-    stack_c[top] = 0
-    top += 1
+    dq = deque([(ri, rj)])
+    while dq:
+        i, j = dq.popleft()
+        # right neighbor
+        if j + 1 < N and not visited[i, j + 1]:
+            d = wrap_to_pi(wrapped_phase[i, j + 1] - wrapped_phase[i, j])
+            unwrapped[i, j + 1] = unwrapped[i, j] + d + 2 * np.pi * k_h[i, j]
+            visited[i, j + 1] = True
+            dq.append((i, j + 1))
+        # left neighbor
+        if j - 1 >= 0 and not visited[i, j - 1]:
+            d = wrap_to_pi(wrapped_phase[i, j - 1] - wrapped_phase[i, j])
+            unwrapped[i, j - 1] = unwrapped[i, j] + d - 2 * np.pi * k_h[i, j - 1]
+            visited[i, j - 1] = True
+            dq.append((i, j - 1))
+        # down neighbor
+        if i + 1 < M and not visited[i + 1, j]:
+            d = wrap_to_pi(wrapped_phase[i + 1, j] - wrapped_phase[i, j])
+            unwrapped[i + 1, j] = unwrapped[i, j] + d + 2 * np.pi * k_v[i, j]
+            visited[i + 1, j] = True
+            dq.append((i + 1, j))
+        # up neighbor
+        if i - 1 >= 0 and not visited[i - 1, j]:
+            d = wrap_to_pi(wrapped_phase[i - 1, j] - wrapped_phase[i, j])
+            unwrapped[i - 1, j] = unwrapped[i, j] + d - 2 * np.pi * k_v[i - 1, j]
+            visited[i - 1, j] = True
+            dq.append((i - 1, j))
 
-    unwrapped[0, 0] = wrapped_phase[0, 0]
-    visited[0, 0] = 1
+    return unwrapped
 
-    # ------------------------------------------------------------
-    # DFS flood-fill
-    # ------------------------------------------------------------
-    while top > 0:
 
-        top -= 1
-        r = stack_r[top]
-        c = stack_c[top]
+def biased_floodfill(wrapped_phase, k_h, k_v, density, ref=(0, 0)):
+    """
+    Best-first (priority) flood-fill integration of the curl-free corrected
+    gradient field, expanding low residue-density (high-confidence) regions
+    before high-density (near branch cut / decorrelated) regions.
 
-        base_val = unwrapped[r, c]
+    Why this matters despite the field being curl-free (i.e. mathematically
+    path-independent): a plain BFS can wander into a noisy/decorrelated
+    patch early and grow its unwrapped "frontier" outward from there, so if
+    there's ever any imperfection in the correction field -- a masked/NaN
+    region, a disconnected component, float accumulation over a very long
+    path, or a capacity/tolerance edge case -- the resulting error tends to
+    contaminate whatever got visited nearby in BFS order, which is fairly
+    arbitrary. Growing outward from the reference through the cleanest
+    regions first instead builds a reliable "backbone" via the shortest,
+    lowest-risk paths, and only reaches into noisy regions last and from
+    the most locally-trusted direction available at that point -- so any
+    residual error stays localized to the noisy regions themselves instead
+    of spreading through the clean bulk of the image.
 
-        # -------------------------
-        # RIGHT
-        # -------------------------
-        if c + 1 < N and visited[r, c + 1] == 0:
-            if cut_x[r, c] == 0:
-                unwrapped[r, c + 1] = base_val + wrap_diff(
-                    wrapped_phase[r, c + 1],
-                    wrapped_phase[r, c]
-                )
-                visited[r, c + 1] = 1
-                stack_r[top] = r
-                stack_c[top] = c + 1
-                top += 1
+    Parameters
+    ----------
+    wrapped_phase : (M, N) float array
+    k_h, k_v : jump-count arrays from flow_to_jumps / mcf_unwrap's info
+    density : (M, N) float array from compute_residue_density (or any other
+        per-pixel "riskiness" map you want to prioritize by -- e.g. you
+        could pass 1/contrast instead).
+    ref : reference pixel, held fixed at its wrapped value.
 
-        # -------------------------
-        # LEFT
-        # -------------------------
-        if c - 1 >= 0 and visited[r, c - 1] == 0:
-            if cut_x[r, c - 1] == 0:
-                unwrapped[r, c - 1] = base_val + wrap_diff(
-                    wrapped_phase[r, c - 1],
-                    wrapped_phase[r, c]
-                )
-                visited[r, c - 1] = 1
-                stack_r[top] = r
-                stack_c[top] = c - 1
-                top += 1
+    Returns
+    -------
+    unwrapped : (M, N) float array
+    """
+    M, N = wrapped_phase.shape
+    unwrapped = np.zeros((M, N), dtype=np.float64)
+    visited = np.zeros((M, N), dtype=bool)  # "finalized" / expanded
+    queued = np.zeros((M, N), dtype=bool)
 
-        # -------------------------
-        # DOWN
-        # -------------------------
-        if r + 1 < M and visited[r + 1, c] == 0:
-            if cut_y[r, c] == 0:
-                unwrapped[r + 1, c] = base_val + wrap_diff(
-                    wrapped_phase[r + 1, c],
-                    wrapped_phase[r, c]
-                )
-                visited[r + 1, c] = 1
-                stack_r[top] = r + 1
-                stack_c[top] = c
-                top += 1
+    ri, rj = ref
+    unwrapped[ri, rj] = wrapped_phase[ri, rj]
+    queued[ri, rj] = True
 
-        # -------------------------
-        # UP
-        # -------------------------
-        if r - 1 >= 0 and visited[r - 1, c] == 0:
-            if cut_y[r - 1, c] == 0:
-                unwrapped[r - 1, c] = base_val + wrap_diff(
-                    wrapped_phase[r - 1, c],
-                    wrapped_phase[r, c]
-                )
-                visited[r - 1, c] = 1
-                stack_r[top] = r - 1
-                stack_c[top] = c
-                top += 1
+    counter = itertools.count()  # stable tie-breaking, avoids comparing (i,j) tuples
+    heap = [(float(density[ri, rj]), next(counter), ri, rj)]
 
+    while heap:
+        _, _, i, j = heapq.heappop(heap)
+        if visited[i, j]:
+            continue
+        visited[i, j] = True
+
+        # right
+        if j + 1 < N and not queued[i, j + 1]:
+            d = wrap_to_pi(wrapped_phase[i, j + 1] - wrapped_phase[i, j])
+            unwrapped[i, j + 1] = unwrapped[i, j] + d + 2 * np.pi * k_h[i, j]
+            queued[i, j + 1] = True
+            heapq.heappush(heap, (float(density[i, j + 1]), next(counter), i, j + 1))
+        # left
+        if j - 1 >= 0 and not queued[i, j - 1]:
+            d = wrap_to_pi(wrapped_phase[i, j - 1] - wrapped_phase[i, j])
+            unwrapped[i, j - 1] = unwrapped[i, j] + d - 2 * np.pi * k_h[i, j - 1]
+            queued[i, j - 1] = True
+            heapq.heappush(heap, (float(density[i, j - 1]), next(counter), i, j - 1))
+        # down
+        if i + 1 < M and not queued[i + 1, j]:
+            d = wrap_to_pi(wrapped_phase[i + 1, j] - wrapped_phase[i, j])
+            unwrapped[i + 1, j] = unwrapped[i, j] + d + 2 * np.pi * k_v[i, j]
+            queued[i + 1, j] = True
+            heapq.heappush(heap, (float(density[i + 1, j]), next(counter), i + 1, j))
+        # up
+        if i - 1 >= 0 and not queued[i - 1, j]:
+            d = wrap_to_pi(wrapped_phase[i - 1, j] - wrapped_phase[i, j])
+            unwrapped[i - 1, j] = unwrapped[i, j] + d - 2 * np.pi * k_v[i - 1, j]
+            queued[i - 1, j] = True
+            heapq.heappush(heap, (float(density[i - 1, j]), next(counter), i - 1, j))
     return unwrapped

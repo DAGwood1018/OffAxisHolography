@@ -48,6 +48,7 @@ class OffAxisFilter(DFT):
         self._mask = np.ones((self.input_shape[0], self.input_shape[1]), dtype=dtype)
         self._window = None
         self._kNA = -1
+        self._fit_params = (0, 0, 0)
 
     def __call__(self, fringes):
         """
@@ -387,7 +388,7 @@ class OffAxisFilter(DFT):
     def calibrate(self, fringes, dz=0, kNA=-1, roi=None, optimize=True, visualize=False, **kwargs):
         """
         :param fringes: Hologram (typically of background) to calibrate phase filtering to.
-        :param dz: A small distance to propagate the fringes by. By assuming telecentricity this is used to isolate tilt + aberations from signal.
+        :param dz: A small distance to propagate the fringes by. By assuming telecentricity this is used to isolate tilt + aberrations from signal.
         :param kNA: The known numerical aperture of the system in terms of pixels. Overrides the automatic radius of the mask if not None.
         :param roi: A pre-selected ROI to calibrate with.
         :param optimize: Optimize the mask center according to some cost function.
@@ -440,6 +441,7 @@ class OffAxisFilter(DFT):
             except RuntimeError:
                 warn("Could not align to tilt.")
 
+        self._fit_params = (a, b, c)
         if visualize:
             self._view_filter(fringes)
         return roi, a, b, c
@@ -463,6 +465,7 @@ class OffAxisFilter(DFT):
         # Construct digital reference wave
         self._ref = self.create_ref(self._dims[0], self._dims[1], a, b, c)
         self._crop_ifft(2 * self._kNA, 2 * self._kNA)
+        self._fit_params = (a, b, c)
 
     def reset(self):
         """
@@ -475,6 +478,7 @@ class OffAxisFilter(DFT):
         self._window = None
         self._kNA = -1
         self._stacked = False
+        self._fit_params = (0, 0, 0)
 
         self._fft = DiscreteTransform(dims, self._fft.direction, self._fft.dtype, threads=self._fft.threads,
                                       nstack=0, flags=self._ifft.flags)
