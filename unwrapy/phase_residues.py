@@ -1,10 +1,8 @@
 import numpy as np
-from numba import njit
+from scipy.ndimage import gaussian_filter
+from unwrapy.unwrap_methods import wrap_to_pi
 
-from unwrapy.phase_unwrapping import wrap_to_pi
 
-
-@njit(cache=True)
 def calc_residues(wrapped_phase):
     """
     Compute phase residues using the standard 2×2 circulation.
@@ -67,7 +65,5 @@ def residue_density(residues, sigma=3.0):
     density[1:, 1:] += absres
 
     if sigma > 0:
-        from scipy.ndimage import gaussian_filter
         density = gaussian_filter(density, sigma=sigma)
-
     return density

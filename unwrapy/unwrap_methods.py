@@ -12,14 +12,6 @@ def wrap_to_pi(x):
     """
     return (x + np.pi) % (2 * np.pi) - np.pi
 
-@njit(cache=True)
-def wrap_diff(a, b):
-    """
-    Wrap difference to (-pi, pi].
-    """
-    d = a - b
-    return wrap_to_pi(d)
-
 
 def floodfill(wrapped_phase, k_h, k_v, ref=(0, 0)):
     """

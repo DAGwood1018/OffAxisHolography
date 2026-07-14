@@ -24,17 +24,6 @@ Pipeline
 from ortools.graph.python.min_cost_flow import SimpleMinCostFlow
 import numpy as np
 
-from unwrapy.phase_residues import residue_density
-from unwrapy.phase_unwrapping import floodfill, biased_floodfill
-
-
-# --------------------------------------------------------------------------
-# Graph construction
-# --------------------------------------------------------------------------
-
-def _node_id(i, j, ncols):
-    return i * ncols + j
-
 
 def build_mcf_arcs(residues, cost_h, cost_v):
     """
@@ -99,10 +88,6 @@ def build_mcf_arcs(residues, cost_h, cost_v):
     return tails, heads, costs, supplies, (Mr, Nr)
 
 
-# --------------------------------------------------------------------------
-# Solve
-# --------------------------------------------------------------------------
-
 def solve_mcf(tails, heads, costs, supplies):
     """
     Solve the min-cost-flow problem defined by (tails, heads, costs, supplies).
@@ -144,7 +129,6 @@ def solve_mcf(tails, heads, costs, supplies):
     total_abs_charge = max(int(np.abs(supplies[:-1]).sum()), 1)
     n_arcs = len(tails)
 
-
     smcf = SimpleMinCostFlow()
     all_tails = np.concatenate([tails, heads])
     all_heads = np.concatenate([heads, tails])
@@ -166,11 +150,7 @@ def solve_mcf(tails, heads, costs, supplies):
     )
 
 
-# --------------------------------------------------------------------------
-# Convert flow -> per-primal-edge 2*pi jump counts
-# --------------------------------------------------------------------------
-
-def flow_to_jumps(net_flow, residues_shape, M, N):
+def extract_cuts(net_flow, residues_shape, M, N):
     """
     Translate the solved dual-graph flow (in the same arc order produced by
     build_mcf_arcs) into integer jump-count arrays aligned with cost_h
@@ -212,163 +192,3 @@ def flow_to_jumps(net_flow, residues_shape, M, N):
     pos += n
 
     return k_h, k_v
-
-# --------------------------------------------------------------------------
-# Top level
-# --------------------------------------------------------------------------
-
-def mcf_unwrap(wrapped_phase, residues, cost_h, cost_v, ref=(0, 0), cap=None,
-               density_sigma=3.0):
-    """
-    Full MCF phase-unwrapping pipeline.
-
-    Parameters
-    ----------
-    wrapped_phase : (M, N) float array, radians
-    residues : (M-1, N-1) int array (from calc_residues)
-    cost_h : (M, N-1) int array (from calc_costs)
-    cost_v : (M-1, N) int array (from calc_costs)
-    ref : reference pixel to hold fixed at its wrapped value.
-    cap : force a specific arc capacity instead of the automatic adaptive
-        search (see solve_mcf's docstring).
-    density_sigma : Gaussian blur radius (pixels) for the residue-density
-        map that orders the flood-fill integration; low-density (clean)
-        regions are integrated before high-density (near branch cuts)
-        regions. If None, fall back to a plain BFS instead.
-
-    Returns
-    -------
-    unwrapped : (M, N) float array
-    info : dict with 'k_h', 'k_v', 'n_cut_edges', 'total_cost', 'cap',
-        'density' (the residue-density map used to order the flood fill,
-        or None if density_sigma is None).
-    """
-    M, N = wrapped_phase.shape
-    tails, heads, costs, supplies, shape = build_mcf_arcs(residues, cost_h, cost_v)
-    net_flow = solve_mcf(tails, heads, costs, supplies)
-    k_h, k_v = flow_to_jumps(net_flow, shape, M, N)
-
-    if density_sigma is None:
-        unwrapped = floodfill(wrapped_phase, k_h, k_v, ref=ref)
-    else:
-        density = residue_density(residues, sigma=density_sigma)
-        unwrapped = biased_floodfill(wrapped_phase, k_h, k_v, density, ref=ref)
-    return unwrapped, k_h, k_v
-
-
-# --------------------------------------------------------------------------
-# Visualization
-# --------------------------------------------------------------------------
-
-def plot_branch_cuts(background, residues, k_h, k_v, ax=None, cmap="gray",
-                      cut_color="red", show_residues=True, linewidth_scale=1.5,
-                      title="Branch cuts"):
-    """
-    Plot branch cuts (and, optionally, residue locations) over a background
-    image (e.g. the wrapped phase, the contrast map, or the unwrapped
-    phase).
-
-    Branch cuts are drawn the standard way: as segments on the *dual* grid
-    (the grid whose nodes are residues), since that's what a "cut" actually
-    separates -- not as marks on the primal pixel edges themselves. Each
-    residue sits at the center of the 2x2 pixel loop it was computed from,
-    i.e. residue (i, j) is at continuous image coordinates
-    (row=i+0.5, col=j+0.5). A nonzero k_h[i, j] or k_v[i, j] means the
-    solver cut the primal pixel-edge at that location, which is the same
-    thing as saying the dual edge between the two residue-cells (or a
-    residue-cell and the image border) adjacent to that primal edge is
-    "on" -- so that's the segment drawn.
-
-    Parameters
-    ----------
-    background : (M, N) ndarray
-        Image to show underneath the cuts (wrapped phase, contrast, etc).
-    residues : (M-1, N-1) int array
-    k_h : (M, N-1) int array  -- from mcf_unwrap()'s info["k_h"]
-    k_v : (M-1, N) int array  -- from mcf_unwrap()'s info["k_v"]
-    ax : matplotlib Axes, optional
-    linewidth_scale : scales line width by |k| (multiple 2*pi cuts stacked
-        on the same edge get a thicker line).
-
-    Returns
-    -------
-    ax : matplotlib Axes
-    """
-    import matplotlib.pyplot as plt
-    from matplotlib.collections import LineCollection
-
-    M, N = background.shape
-    Mr, Nr = residues.shape  # Mr = M-1, Nr = N-1
-
-    if ax is None:
-        _, ax = plt.subplots(figsize=(7, 7))
-
-    ax.imshow(background, cmap=cmap, origin="upper",
-              extent=[-0.5, N - 0.5, M - 0.5, -0.5])
-
-    segments = []
-    widths = []
-
-    # --- interior vertical dual edges, from k_h[1:-1, :] -------------------
-    # k_h[r, j] (1 <= r <= Mr-1) came from dual pair (r-1, j) -- (r, j)
-    rows, cols = np.nonzero(k_h[1:-1, :])
-    for r0, j in zip(rows, cols):
-        r = r0 + 1  # index back into k_h
-        y0, y1 = (r - 1) + 0.5, r + 0.5
-        x = j + 0.5
-        segments.append([(x, y0), (x, y1)])
-        widths.append(abs(int(k_h[r, j])))
-
-    # --- interior horizontal dual edges, from k_v[:, 1:-1] ------------------
-    # k_v[i, c] (1 <= c <= Nr-1) came from dual pair (i, c-1) -- (i, c)
-    rows, cols = np.nonzero(k_v[:, 1:-1])
-    for i, c0 in zip(rows, cols):
-        c = c0 + 1  # index back into k_v
-        x0, x1 = (c - 1) + 0.5, c + 0.5
-        y = i + 0.5
-        segments.append([(x0, y), (x1, y)])
-        widths.append(abs(int(k_v[i, c])))
-
-    # --- ground (border) cuts -----------------------------------------------
-    # top: k_h[0, j] -> dual node (0, j) to top border
-    for j in np.nonzero(k_h[0, :])[0]:
-        segments.append([(j + 0.5, 0.5), (j + 0.5, -0.5)])
-        widths.append(abs(int(k_h[0, j])))
-    # bottom: k_h[-1, j] -> dual node (Mr-1, j) to bottom border
-    for j in np.nonzero(k_h[-1, :])[0]:
-        segments.append([(j + 0.5, Mr - 0.5), (j + 0.5, M - 0.5)])
-        widths.append(abs(int(k_h[-1, j])))
-    # left: k_v[i, 0] -> dual node (i, 0) to left border
-    for i in np.nonzero(k_v[:, 0])[0]:
-        segments.append([(0.5, i + 0.5), (-0.5, i + 0.5)])
-        widths.append(abs(int(k_v[i, 0])))
-    # right: k_v[i, -1] -> dual node (i, Nr-1) to right border
-    for i in np.nonzero(k_v[:, -1])[0]:
-        segments.append([(Nr - 0.5, i + 0.5), (N - 0.5, i + 0.5)])
-        widths.append(abs(int(k_v[i, -1])))
-
-    if segments:
-        widths = np.array(widths, dtype=float)
-        lc = LineCollection(segments, colors=cut_color,
-                             linewidths=1.0 + linewidth_scale * (widths - 1),
-                             zorder=3)
-        ax.add_collection(lc)
-
-    if show_residues:
-        pos_i, pos_j = np.nonzero(residues > 0)
-        neg_i, neg_j = np.nonzero(residues < 0)
-        ax.scatter(pos_j + 0.5, pos_i + 0.5, marker="+", s=60,
-                   c="yellow", linewidths=2, zorder=4, label="+ residue")
-        ax.scatter(neg_j + 0.5, neg_i + 0.5, marker="o", s=30,
-                   facecolors="none", edgecolors="cyan", linewidths=1.5,
-                   zorder=4, label="- residue")
-        if len(pos_i) or len(neg_i):
-            ax.legend(loc="upper right", framealpha=0.8, fontsize=8)
-
-    ax.set_xlim(-0.5, N - 0.5)
-    ax.set_ylim(M - 0.5, -0.5)
-    ax.set_title(title)
-    ax.set_xlabel("column")
-    ax.set_ylabel("row")
-    plt.show()
-    return ax
