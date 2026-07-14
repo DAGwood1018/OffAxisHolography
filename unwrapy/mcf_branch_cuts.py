@@ -103,7 +103,7 @@ def build_mcf_arcs(residues, cost_h, cost_v):
 # Solve
 # --------------------------------------------------------------------------
 
-def solve_mcf(tails, heads, costs, supplies, cap=None, growth=8):
+def solve_mcf(tails, heads, costs, supplies):
     """
     Solve the min-cost-flow problem defined by (tails, heads, costs, supplies).
 
@@ -139,50 +139,29 @@ def solve_mcf(tails, heads, costs, supplies, cap=None, growth=8):
     -------
     net_flow : 1D int64 array, same length/order as `tails`/`heads`:
         net_flow[k] = flow(tails[k] -> heads[k]) - flow(heads[k] -> tails[k])
-    used_cap : int, the capacity that actually produced a feasible solve.
     """
     # ground node is always the last entry in `supplies` (see build_mcf_arcs)
     total_abs_charge = max(int(np.abs(supplies[:-1]).sum()), 1)
-
-    if cap is not None:
-        cap_schedule = [int(cap)]
-    else:
-        # start near the largest single residue's magnitude (almost always
-        # enough for the typical case of small, local dipole-like clusters),
-        # then grow geometrically up to the provably-sufficient global bound.
-        start = max(int(np.abs(supplies[:-1]).max()), 1)
-        cap_schedule = []
-        c = start
-        while c < total_abs_charge:
-            cap_schedule.append(c)
-            c *= growth
-        cap_schedule.append(total_abs_charge)
-
     n_arcs = len(tails)
-    last_status = None
 
-    for c in cap_schedule:
 
-        smcf = SimpleMinCostFlow()
-        all_tails = np.concatenate([tails, heads])
-        all_heads = np.concatenate([heads, tails])
-        all_costs = np.concatenate([costs, costs])
-        all_caps = np.full(2 * n_arcs, c, dtype=np.int64)
+    smcf = SimpleMinCostFlow()
+    all_tails = np.concatenate([tails, heads])
+    all_heads = np.concatenate([heads, tails])
+    all_costs = np.concatenate([costs, costs])
+    all_caps = np.full(2 * n_arcs, total_abs_charge, dtype=np.int64)
 
-        smcf.add_arcs_with_capacity_and_unit_cost(all_tails, all_heads, all_caps, all_costs)
-        smcf.set_nodes_supplies(np.arange(len(supplies), dtype=np.int64), supplies.astype(np.int64))
+    smcf.add_arcs_with_capacity_and_unit_cost(all_tails, all_heads, all_caps, all_costs)
+    smcf.set_nodes_supplies(np.arange(len(supplies), dtype=np.int64), supplies.astype(np.int64))
 
-        status = smcf.solve()
-        last_status = status
-        if status == smcf.OPTIMAL:
-            flows = smcf.flows(np.arange(2 * n_arcs, dtype=np.int64))
-            net_flow = flows[:n_arcs] - flows[n_arcs:]
-            return net_flow, c
-        # INFEASIBLE (capacity too tight) -> try the next, larger cap
-        continue
+    status = smcf.solve()
+    if status == smcf.OPTIMAL:
+        flows = smcf.flows(np.arange(2 * n_arcs, dtype=np.int64))
+        net_flow = flows[:n_arcs] - flows[n_arcs:]
+        return net_flow
+    # INFEASIBLE (capacity too tight) -> try the next, larger cap
     raise RuntimeError(
-        f"MCF solve failed even at the provably-sufficient capacity "
-        f"{total_abs_charge} (last status={last_status}); this should not "
+        f"MCF solve failed; this should not "
         f"happen unless supplies don't sum to zero."
     )
 
@@ -255,7 +234,7 @@ def mcf_unwrap(wrapped_phase, residues, cost_h, cost_v, ref=(0, 0), cap=None,
     density_sigma : Gaussian blur radius (pixels) for the residue-density
         map that orders the flood-fill integration; low-density (clean)
         regions are integrated before high-density (near branch cuts)
-        regions. Set to None to fall back to a plain BFS instead.
+        regions. If None, fall back to a plain BFS instead.
 
     Returns
     -------
@@ -266,7 +245,7 @@ def mcf_unwrap(wrapped_phase, residues, cost_h, cost_v, ref=(0, 0), cap=None,
     """
     M, N = wrapped_phase.shape
     tails, heads, costs, supplies, shape = build_mcf_arcs(residues, cost_h, cost_v)
-    net_flow, used_cap = solve_mcf(tails, heads, costs, supplies, cap=cap)
+    net_flow = solve_mcf(tails, heads, costs, supplies)
     k_h, k_v = flow_to_jumps(net_flow, shape, M, N)
 
     if density_sigma is None:
@@ -391,4 +370,5 @@ def plot_branch_cuts(background, residues, k_h, k_v, ax=None, cmap="gray",
     ax.set_title(title)
     ax.set_xlabel("column")
     ax.set_ylabel("row")
+    plt.show()
     return ax

@@ -36,7 +36,7 @@ def EIG(field, alpha=0.0):
         return -1*np.sum(eigvals[0:-kappa])
 
 @njit(cache=True)
-def propagate(field, z, wl, sz, nb=0):
+def propagate(field, z, wl, sz, nb=0, paraxial=True):
     """
     Propagates a complex field to a single plane using the Angular Spectrum Method.
 
@@ -80,8 +80,11 @@ def propagate(field, z, wl, sz, nb=0):
     FX = fx.reshape(1, Nxp)
     FY = fy.reshape(Nyp, 1)
 
-    arg = 1.0 - (wl * FX) ** 2 - (wl * FY) ** 2
-    H = np.exp(1j * k * z * np.sqrt(arg + 0j))
+    if paraxial:
+        H = np.exp(1j * k * z * (1-np.pi * wl *  (FX ** 2 + FY ** 2)))
+    else:
+        arg = 1.0 - (wl * FX) ** 2 - (wl * FY) ** 2
+        H = np.exp(1j * k * z * np.sqrt(arg + 0j))
 
     Ft = np.fft.fft2(padded)
     propagated = np.fft.ifft2(Ft * H)

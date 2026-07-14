@@ -30,8 +30,6 @@ class AngularSpectrum(Convolve):
 
     def __init__(self, M, N, wl, sz, nb=0, threads=1, dtype='complex128', **kwargs):
         """
-        *Using un-normalized FFTs is fine since we are only concerned with the phase information.
-
         :param M, N: Image dimensions.
         :type M, N: int
         :param wl: The wavelength.
@@ -57,7 +55,7 @@ class AngularSpectrum(Convolve):
         FY = fy.reshape(self.input_shape[0], 1)
         self._kz = 2*np.pi * np.sqrt(1.0 - (wl * FX) ** 2 - (wl * FY) ** 2) / wl
 
-    def _kernel(self, z, evanescent=True):
+    def _kernel(self, z):
         """
         Creates angular spectrum transfer function
 
@@ -67,5 +65,45 @@ class AngularSpectrum(Convolve):
         :rtype: ndarray
         """
 
-        kz = self._kz if evanescent else np.maximum(self._kz, 0)
-        return np.exp(1j * kz * z)
+        return np.exp(1j * self._kz * z)
+
+class ParaxialAngularSpectrum(Convolve):
+
+    def __init__(self, M, N, wl, sz, nb=0, threads=1, dtype='complex128', **kwargs):
+        """
+        :param M, N: Image dimensions.
+        :type M, N: int
+        :param wl: The wavelength.
+        :type wl: float
+        :param sz: The pixel size.
+        :type sz: float
+        :param nb: Padding to use. Default is 0.
+        :type nb: int
+        :param threads: Number of threads to use. Default is 1.
+        :type threads: int
+        :param dtype: The dtype to use. Default is 'complex128'.
+        :type dtype: string
+        :param kwargs: Additional parameters to create discrete transforms.
+        """
+
+        super().__init__((M, N), nb, threads=threads, dtype=dtype, **kwargs)
+
+        # Frequency coordinates on padded grid
+        fx = np.fft.fftshift(np.fft.fftfreq(self.input_shape[1], sz))
+        fy = np.fft.fftshift(np.fft.fftfreq(self.input_shape[0], sz))
+
+        FX = fx.reshape(1, self.input_shape[1])
+        FY = fy.reshape(self.input_shape[0], 1)
+        self._kz_approx = 1-np.exp(-1j * np.pi * wl * (FX**2 + FY**2))
+
+    def _kernel(self, z):
+        """
+        Creates angular spectrum transfer function
+
+        :param z: Distance to propagate.
+        :type z: float
+        :return: The transfer function.
+        :rtype: ndarray
+        """
+
+        return np.exp(1j * self._kz_approx * z)
