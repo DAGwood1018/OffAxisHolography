@@ -1,10 +1,9 @@
 from warnings import warn
 import numpy as np
-import cv2
 
-from py_off_axis_holo.discrete_transforms import DFT, DiscreteTransform
-from py_off_axis_holo.fourier_propagators import AngularSpectrum
-from py_off_axis_holo.holography_helpers import select_mask_roi, find_peak_in_roi, off_axis_masks, view_filter
+from py_off_axis_holo.holography.discrete_transforms import DFT, DiscreteTransform
+from py_off_axis_holo.holography.fourier_propagators import AngularSpectrum
+from py_off_axis_holo.holography.holography_helpers import select_mask_roi, find_peak_in_roi, off_axis_masks, view_filter
 
 
 class OffAxisFilter(DFT):

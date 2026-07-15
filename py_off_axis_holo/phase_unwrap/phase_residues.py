@@ -2,6 +2,12 @@ import numpy as np
 from numba import njit
 from scipy.ndimage import gaussian_filter
 
+@njit(inline='always')
+def wrap_to_pi(x):
+    """
+    Wrap phase to (-pi, pi].
+    """
+    return (x + np.pi) % (2 * np.pi) - np.pi
 
 def calc_residues(wrapped_phase):
     """
@@ -68,10 +74,3 @@ def residue_density(residues, sigma=3.0):
         density = gaussian_filter(density, sigma=sigma)
     return density
 
-
-@njit(inline='always')
-def wrap_to_pi(x):
-    """
-    Wrap phase to (-pi, pi].
-    """
-    return (x + np.pi) % (2 * np.pi) - np.pi

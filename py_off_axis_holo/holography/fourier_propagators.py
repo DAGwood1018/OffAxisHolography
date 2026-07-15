@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 import numpy as np
 
-from py_off_axis_holo.discrete_transforms import DFT
+from py_off_axis_holo.holography.discrete_transforms import DFT
 
 
 class Convolve(DFT, ABC):

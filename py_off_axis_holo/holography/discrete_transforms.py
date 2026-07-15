@@ -1,7 +1,7 @@
 import pyfftw
 import numpy as np
 
-from py_off_axis_holo.holography_helpers import pad_arr, unpad_arr
+from py_off_axis_holo.holography.holography_helpers import pad_arr, unpad_arr
 
 BUILD_FLAGS = ('FFTW_MEASURE',)
 
