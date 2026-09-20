@@ -6,7 +6,7 @@ from py_off_axis_holo.phase_unwrap.mcf_branch_cuts import build_mcf_arcs, solve_
 from py_off_axis_holo.phase_unwrap.phase_residues import wrap_to_pi, calc_residues, residue_density
 
 
-def floodfill(wrapped_phase, k_h, k_v, res_density, ref=(0, 0)):
+def floodfill(wrapped_phase, k_h, k_v, res_density, ref_pxl=(0, 0)):
     """
     Best-first (priority) flood-fill integration of the curl-free corrected
     gradient field, expanding low residue-density (high-confidence) regions
@@ -33,7 +33,7 @@ def floodfill(wrapped_phase, k_h, k_v, res_density, ref=(0, 0)):
     res_density : (M, N) float array from compute_residue_density (or any other
         per-pixel "riskiness" map you want to prioritize by -- e.g. you
         could pass 1/contrast instead).
-    ref : reference pixel, held fixed at its wrapped value.
+    ref_pxl : reference pixel, held fixed at its wrapped value.
 
     Returns
     -------
@@ -44,7 +44,7 @@ def floodfill(wrapped_phase, k_h, k_v, res_density, ref=(0, 0)):
     visited = np.zeros((M, N), dtype=bool)  # "finalized" / expanded
     queued = np.zeros((M, N), dtype=bool)
 
-    ri, rj = ref
+    ri, rj = ref_pxl
     unwrapped[ri, rj] = wrapped_phase[ri, rj]
     queued[ri, rj] = True
 
@@ -85,7 +85,7 @@ def floodfill(wrapped_phase, k_h, k_v, res_density, ref=(0, 0)):
     return unwrapped
 
 
-def phase_unwrap(wrapped_phase, cost_h, cost_v, sigma=3.0, ref=(0,0)):
+def phase_unwrap(wrapped_phase, cost_h, cost_v, sigma=1.0, ref_pxl=(0, 0)):
     """
     Full MCF phase-unwrapping pipeline.
 
@@ -115,5 +115,5 @@ def phase_unwrap(wrapped_phase, cost_h, cost_v, sigma=3.0, ref=(0,0)):
         density = residue_density(residues, sigma=sigma)
     else:
         density = np.ones((M+1, N+1), dtype=np.float64)
-    unwrapped = floodfill(wrapped_phase, k_h, k_v, density, ref=ref)
+    unwrapped = floodfill(wrapped_phase, k_h, k_v, density, ref_pxl=ref_pxl)
     return unwrapped, k_h, k_v
