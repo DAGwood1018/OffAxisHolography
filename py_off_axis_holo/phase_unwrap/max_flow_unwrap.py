@@ -13,6 +13,7 @@ Requires: pip install ortools numpy
 """
 
 import numpy as np
+from warnings import warn
 from ortools.graph.python import max_flow
 
 from .unwrap_utils import wrap_to_pi
@@ -29,7 +30,7 @@ class UnwrapPUMA:
     phi, k = unwrapper.unwrap(psi)
     """
 
-    def __init__(self, min_connectivity=True, max_iters=200):
+    def __init__(self, min_connectivity=True, max_iters=1000):
         if min_connectivity:
             self.connectivity = 4
         else:
@@ -166,6 +167,8 @@ class UnwrapPUMA:
             if not improved or new_energy >= prev_energy:
                 break
             prev_energy = new_energy
+            if outer == self.max_iters-1:
+                warn("Hit max number of allowed iterations.")
 
         phi = psi + 2 * np.pi * k.reshape(H, W)
         return phi, k.reshape(H, W)

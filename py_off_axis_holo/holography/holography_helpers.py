@@ -171,10 +171,10 @@ def view_filter(Fh, mask):
     Fh_img = format_holo(np.abs(Fh) ** (1 / 4))
 
     cv2.namedWindow('visualize_roi', cv2.WINDOW_NORMAL)
-    cv2.imshow('visualize_roi', Fh)
+    cv2.imshow('visualize_roi', Fh_img)
 
     cv2.waitKey(1500)
-    Fh *= mask.astype('uint8')
+    Fh_img *= mask.astype('uint8')
     cv2.imshow('visualize_roi', Fh_img)
     cv2.waitKey(4000)
 
