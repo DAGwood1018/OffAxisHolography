@@ -127,9 +127,6 @@ class UnwrapPUMA:
         k_new = k + direction * b
         return k_new, not np.array_equal(k_new, k)
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
     def unwrap(self, psi):
         """
         Unwrap a 2D wrapped-phase image.

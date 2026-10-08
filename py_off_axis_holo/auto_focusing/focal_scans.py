@@ -1,202 +1,265 @@
+"""
+Autofocus routines for digital holography using edge-sparsity metrics
+(Gini index / Tamura coefficient, see metrics.py) on the complex field.
+
+Propagation uses the angular spectrum method and is compiled with numba.
+np.fft inside @njit requires the rocket-fft package:
+
+    pip install rocket-fft
+
+Main entry points
+-----------------
+    propagate(field, z, wl, sz, nb=0, paraxial=True)          [njit]
+    scan_focus(field, wl, sz, zmin, zmax, nz, metric="gini", ...)
+    find_best_focus(field, wl, sz, zmin, zmax, metric="gini", ...)
+    autofocus_scan(stack, metric="gini")
+
+Inputs are complex fields (amplitude + phase). All metrics are
+*maximized* at focus.
+"""
+
 import numpy as np
 from numba import njit, prange
 
 from .metrics import gini_sparsity_metric, tamura_sparsity_metric
 
 
-@njit(cache=True, inline='always')
+def _use_gini(metric):
+    if metric == "gini":
+        return True
+    if metric == "tamura":
+        return False
+    raise ValueError(f"metric must be 'gini' or 'tamura', got {metric!r}")
+
+
+def _as_field(field):
+    field = np.ascontiguousarray(field, dtype=np.complex128)
+    if field.ndim != 2:
+        raise ValueError("field must be a 2-D complex array")
+    return field
+
+
+# --------------------------------------------------------------------------
+# Propagation (angular spectrum method)
+# --------------------------------------------------------------------------
+
+@njit(cache=True)
+def _fftfreq(n, d):
+    """Same as np.fft.fftfreq(n, d)."""
+    f = np.empty(n, dtype=np.float64)
+    for i in range(n):
+        f[i] = (i if i < (n + 1) // 2 else i - n) / (n * d)
+    return f
+
+
+@njit(cache=True)
+def _transfer_function(Nyp, Nxp, z, wl, sz, paraxial):
+    """
+    Angular spectrum transfer function on an (Nyp, Nxp) FFT grid.
+
+        exact    : H = exp(i k z sqrt(1 - wl^2 f^2)),  H = 0 where f > 1/wl
+        paraxial : H = exp(i k z) * exp(-i pi wl z f^2)      (Fresnel)
+
+    Evanescent components are dropped rather than allowed to grow
+    exponentially for z < 0.
+    """
+    fx = _fftfreq(Nxp, sz)
+    fy = _fftfreq(Nyp, sz)
+    k = 2.0 * np.pi / wl
+    H = np.empty((Nyp, Nxp), dtype=np.complex128)
+    for iy in range(Nyp):
+        for ix in range(Nxp):
+            f2 = fy[iy] * fy[iy] + fx[ix] * fx[ix]
+            if paraxial:
+                H[iy, ix] = np.exp(1j * (k - np.pi * wl * f2) * z)
+            else:
+                arg = 1.0 - wl * wl * f2
+                if arg > 0.0:
+                    H[iy, ix] = np.exp(1j * k * z * np.sqrt(arg))
+                else:
+                    H[iy, ix] = 0.0
+    return H
+
+
+@njit(cache=True)
+def _pad(field, nb):
+    """Zero-pad by nb on each side (always returns a new complex128 array)."""
+    Ny, Nx = field.shape
+    out = np.zeros((Ny + 2 * nb, Nx + 2 * nb), dtype=np.complex128)
+    out[nb:nb + Ny, nb:nb + Nx] = field
+    return out
+
+
+@njit(cache=True)
+def _propagate_spectrum(Ft, z, wl, sz, Ny, Nx, nb, paraxial):
+    """Propagate a precomputed (padded) spectrum Ft to z and crop to (Ny, Nx)."""
+    Nyp, Nxp = Ft.shape
+    H = _transfer_function(Nyp, Nxp, z, wl, sz, paraxial)
+    U = np.fft.ifft2(Ft * H)
+    return np.ascontiguousarray(U[nb:nb + Ny, nb:nb + Nx])
+
+
+@njit(cache=True)
 def propagate(field, z, wl, sz, nb=0, paraxial=True):
     """
-    Propagates a complex field to a single plane using the Angular Spectrum Method.
+    Propagate a complex field a distance z with the angular spectrum method.
 
     Parameters
     ----------
-    field : complex128[:, :]
-        Input field, shape (Ny, Nx).
-    z : float
-        Propagation distance.
-    wl : float
-        Wavelength.
-    sz : float
-        Pixel pitch.
-    nb : int, optional
-        Zero-padding width on each side. Default is 0.
+    field : 2-D complex128 array, shape (Ny, Nx)
+    z : float          Propagation distance (same units as wl and sz).
+    wl : float         Wavelength.
+    sz : float         Pixel pitch (square pixels).
+    nb : int           Zero-padding width on each side (reduces wrap-around).
+    paraxial : bool    Fresnel (True) or exact angular spectrum (False).
 
     Returns
     -------
-    complex128[:, :]
-        Propagated field cropped back to the original size.
+    2-D complex128 array, same shape as `field`.
     """
-
     Ny, Nx = field.shape
-    k = 2.0 * np.pi / wl
+    Ft = np.fft.fft2(_pad(field, nb))
+    return _propagate_spectrum(Ft, z, wl, sz, Ny, Nx, nb, paraxial)
 
-    # Pad field if requested
-    if nb > 0:
-        Nyp = Ny + 2 * nb
-        Nxp = Nx + 2 * nb
-
-        padded = np.zeros((Nyp, Nxp), dtype=field.dtype)
-        padded[nb:nb + Ny, nb:nb + Nx] = field
-    else:
-        padded = field
-        Nyp, Nxp = Ny, Nx
-
-    # Frequency coordinates on padded grid
-    fx = np.fft.fftfreq(Nxp, sz)
-    fy = np.fft.fftfreq(Nyp, sz)
-
-    FX = fx.reshape(1, Nxp)
-    FY = fy.reshape(Nyp, 1)
-
-    if paraxial:
-        H = np.exp(1j * k * z * (1-np.pi * wl *  (FX ** 2 + FY ** 2)))
-    else:
-        arg = 1.0 - (wl * FX) ** 2 - (wl * FY) ** 2
-        H = np.exp(1j * k * z * np.sqrt(arg + 0j))
-
-    Ft = np.fft.fft2(padded)
-    propagated = np.fft.ifft2(Ft * H)
-
-    # Crop back to original size
-    if nb > 0:
-        return propagated[nb:nb + Ny, nb:nb + Nx]
-    return propagated
 
 # --------------------------------------------------------------------------
-# Autofocus scan helper
+# numba workers
 # --------------------------------------------------------------------------
+
+@njit(cache=True)
+def _score(U, use_gini):
+    if use_gini:
+        return gini_sparsity_metric(U)
+    return tamura_sparsity_metric(U)
+
 
 @njit(parallel=True, cache=True)
-def _autofocus_scan_core(stack: np.ndarray, use_gini: bool) -> np.ndarray:
-    """njit worker: stack must already be the representation to score
-    (complex128 wavefront, or real float64 amplitude/phase)."""
-    n_planes = stack.shape[0]
-    scores = np.empty(n_planes, dtype=np.float64)
-    for i in prange(n_planes):
-        if use_gini:
-            scores[i] = edge_sparsity_gini(stack[i])
-        else:
-            scores[i] = edge_sparsity_tamura(stack[i])
+def _core_scan(field, zaxis, wl, sz, nb, paraxial, use_gini):
+    """Score the field at every z in zaxis (parallel over planes).
+    The input spectrum is computed once and shared by all planes."""
+    Ny, Nx = field.shape
+    Ft = np.fft.fft2(_pad(field, nb))
+    scores = np.empty(zaxis.size, dtype=np.float64)
+    for i in prange(zaxis.size):
+        U = _propagate_spectrum(Ft, zaxis[i], wl, sz, Ny, Nx, nb, paraxial)
+        scores[i] = _score(U, use_gini)
     return scores
 
 
-def autofocus_scan(stack: np.ndarray, use_gini: bool = True,
-                    field_type: str = "complex") -> np.ndarray:
-    """
-    Apply the edge-sparsity Gini or Tamura metric to every plane of a
-    reconstructed z-stack and return the metric curve.
+@njit(cache=True)
+def _golden_section(field, a, b, tol, wl, sz, nb, paraxial, use_gini):
+    """Golden-section search for the metric maximum on [a, b].
+    Returns (z0, score at z0)."""
+    Ny, Nx = field.shape
+    Ft = np.fft.fft2(_pad(field, nb))
+    invphi = (np.sqrt(5.0) - 1.0) / 2.0
 
-    Parameters
-    ----------
-    stack : 3-D array, shape (n_planes, height, width)
-        The numerically back-propagated complex wavefront U(x, y; z_i) at
-        each candidate depth z_i, stacked along axis 0. May be complex128
-        (a genuinely complex stack) or already-real float64 if you've
-        precomputed amplitude/phase yourself.
-    use_gini : bool
-        If True, use the Gini index; otherwise use the Tamura coefficient.
-    field_type : {"complex", "amplitude", "phase"}
-        Which representation of the wavefront the edge map is computed on:
-          * "complex"   -- use the complex field directly (the approach
-                            matching "edge sparsity of the complex optical
-                            wavefront"); requires a complex128 `stack` and
-                            is jointly sensitive to amplitude and phase
-                            edges in a single metric.
-          * "amplitude" -- score np.abs(stack), i.e. the intensity/
-                            amplitude edge map only.
-          * "phase"     -- score np.angle(stack), i.e. the phase edge map
-                            only. Note: np.angle wraps to (-pi, pi], so
-                            genuine phase discontinuities (fringes, vortex
-                            structures) and spurious 2*pi wrap edges are
-                            not distinguished here; unwrap first if that
-                            matters for your sample.
-        Ignored (treated as a no-op) if `stack` is already a real array.
+    c = b - (b - a) * invphi
+    d = a + (b - a) * invphi
+    fc = _score(_propagate_spectrum(Ft, c, wl, sz, Ny, Nx, nb, paraxial), use_gini)
+    fd = _score(_propagate_spectrum(Ft, d, wl, sz, Ny, Nx, nb, paraxial), use_gini)
+    while abs(b - a) > tol:
+        if fc > fd:           # maximum lies in [a, d]
+            b = d
+            d, fd = c, fc
+            c = b - (b - a) * invphi
+            fc = _score(_propagate_spectrum(Ft, c, wl, sz, Ny, Nx, nb, paraxial), use_gini)
+        else:                 # maximum lies in [c, b]
+            a = c
+            c, fc = d, fd
+            d = a + (b - a) * invphi
+            fd = _score(_propagate_spectrum(Ft, d, wl, sz, Ny, Nx, nb, paraxial), use_gini)
+
+    z0 = 0.5 * (a + b)
+    f0 = _score(_propagate_spectrum(Ft, z0, wl, sz, Ny, Nx, nb, paraxial), use_gini)
+    return z0, f0
+
+# --------------------------------------------------------------------------
+# Public API
+# --------------------------------------------------------------------------
+
+def scan_for_focus(field, wl, sz, zmin, zmax, nz, metric="gini", nb=0, paraxial=True):
+    """
+    Propagate a complex field to nz planes in [zmin, zmax] and score each.
 
     Returns
     -------
-    1-D float64 array of length n_planes with the metric value per plane.
-    The in-focus plane is typically the argmax of this curve.
+    zaxis (nz,), scores (nz,). Focus is at zaxis[np.argmax(scores)].
     """
-    if np.iscomplexobj(stack):
-        if field_type == "complex":
-            data = stack
-        elif field_type == "amplitude":
-            data = np.abs(stack)
-        elif field_type == "phase":
-            data = np.angle(stack)
-        else:
-            raise ValueError(
-                "field_type must be 'complex', 'amplitude', or 'phase'"
-            )
-    else:
-        data = np.asarray(stack, dtype=np.float64)
-
-    return _autofocus_scan_core(data, use_gini)
-
-@njit(parallel=True, cache=True)
-def scan_focus_gini(field, wl, sz, zmin, zmax, nz, nb=0, paraxial=True):
-    """
-    Propagates a complex field to N planes between zmin and zmax and computes
-    the SPEC focus metric at each plane.
-
-    :param field:       2D complex input field, shape (Ny, Nx).
-    :param wl:          Wavelength of light.
-    :param sz:          Pixel pitch (assumes square pixels).
-    :param zmin:        Minimum propagation distance.
-    :param zmax:        Maximum propagation distance.
-    :param nz:          Number of z planes to sample.
-    :param nb:          Zero padding to apply to the field. Default is 0.
-    :param alpha:       If alpha<0 AMP method used, if 1>alpha>=0 determines the % of eigvals to discard in EIG method.
-    :param paraxial:    Whether to use the paraxial approximation to propagation.
-    :return:            zaxis (N,), scores (N,).
-    """
-
-    zaxis = np.linspace(zmin, zmax, nz)
-    scores = np.empty(nz, dtype=np.float64)
-
-    for i in prange(nz):
-        fieldz = propagate(field, zaxis[i], wl, sz, nb=nb, paraxial=paraxial)
-        scores[i] = gini_sparsity_metric(fieldz)
+    use_gini = _use_gini(metric)
+    zaxis = np.linspace(zmin, zmax, int(nz))
+    scores = _core_scan(_as_field(field), zaxis, float(wl), float(sz),
+                        int(nb), bool(paraxial), use_gini)
     return zaxis, scores
 
-@njit(cache=True)
-def find_best_focus_gini(field, wl, sz, zmin, zmax, tol=1e-6, nb=0, paraxial=True):
+
+def find_best_focus(field, wl, sz, zmin, zmax, metric="gini", nz_coarse=41,
+                    tol=None, nb=0, paraxial=True, return_scan=False):
     """
-    Performs a golden section search around the global minimum found in scores.
+    Locate the in-focus plane in two stages:
 
-    :param field:       2D complex input field.
-    :param wl:          Wavelength of light.
-    :param sz:          Pixel pitch (assumes square pixels).
-    :param zmin:        Minimum propagation distance.
-    :param zmax:        Maximum propagation distance.
-    :param tol:         Convergence tolerance.
-    :param nb:          Zero padding to apply to the field. Default is 0.
-    :param paraxial:    Whether to use the paraxial approximation to propagation.
-    :return:            z value at which focus metric is minimized/maximized and the field at that z value.
+    1. Coarse scan of nz_coarse planes over [zmin, zmax] (parallel) to find
+       the global maximum of the metric (robust to side lobes).
+    2. Golden-section refinement inside the bracket around that maximum.
+
+    Parameters
+    ----------
+    field : 2-D complex array.
+    wl, sz, nb, paraxial : see propagate().
+    zmin, zmax : float      Search range.
+    metric : {"gini", "tamura"}
+    nz_coarse : int         Number of coarse planes (>= 3). Make the step
+                            smaller than the width of the focus peak.
+    tol : float or None     Final bracket width. Default (zmax-zmin)*1e-5.
+    return_scan : bool      Also return the coarse (zaxis, scores).
+
+    Returns
+    -------
+    z0, U0                  Best-focus distance and the field there,
+    (z0, U0, (zaxis, scores)) if return_scan.
     """
+    use_gini = _use_gini(metric)
+    if nz_coarse < 3:
+        raise ValueError("nz_coarse must be >= 3")
+    if tol is None:
+        tol = abs(zmax - zmin) * 1e-5
 
-    gr = (np.sqrt(5.0) + 1.0) / 2.0
-    zc = zmax - (zmax - zmin) / gr
-    zd = zmin + (zmax - zmin) / gr
+    field = _as_field(field)
+    wl, sz, nb, paraxial = float(wl), float(sz), int(nb), bool(paraxial)
 
-    Uc, Ud = propagate(field, zc, wl, sz, nb=nb, paraxial=paraxial), propagate(field, zd, wl, sz, nb=nb, paraxial=paraxial)
-    fc = -gini_sparsity_metric(Uc)
-    fd = -gini_sparsity_metric(Ud)
-    while abs(zmax - zmin) > tol:
-        if fc < fd:
-            zmax = zd
-            zd, fd = zc, fc
-            zc = zmax - (zmax - zmin) / gr
-            Uc = propagate(field, zc, wl, sz, nb=nb, paraxial=paraxial)
-            fc = -gini_sparsity_metric(Uc)
-        else:
-            zmin = zc
-            zc, fc = zd, fd
-            zd = zmin + (zmax - zmin) / gr
-            Ud = propagate(field, zd, wl, sz, nb=nb, paraxial=paraxial)
-            fd = -gini_sparsity_metric(Ud)
+    zaxis = np.linspace(zmin, zmax, int(nz_coarse))
+    scores = _core_scan(field, zaxis, wl, sz, nb, paraxial, use_gini)
 
-    z0 = (zmin + zmax) / 2.0
-    return z0, propagate(field, z0, wl, sz, nb=nb, paraxial=paraxial)
+    i = int(np.argmax(scores))
+    a = float(zaxis[max(i - 1, 0)])
+    b = float(zaxis[min(i + 1, zaxis.size - 1)])
+    z0, f0 = _golden_section(field, a, b, float(tol), wl, sz, nb, paraxial, use_gini)
 
+    # Guard: never return something worse than the best coarse sample
+    if f0 < scores[i]:
+        z0 = float(zaxis[i])
+
+    U0 = propagate(field, z0, wl, sz, nb, paraxial)
+    if return_scan:
+        return z0, U0, (zaxis, scores)
+    return z0, U0
+
+
+# --------------------------------------------------------------------------
+# Convenience wrappers
+# --------------------------------------------------------------------------
+
+def scan_focus_gini(field, wl, sz, zmin, zmax, nz, nb=0, paraxial=True):
+    return scan_for_focus(field, wl, sz, zmin, zmax, nz, metric="gini", nb=nb, paraxial=paraxial)
+
+
+def scan_focus_tamura(field, wl, sz, zmin, zmax, nz, nb=0, paraxial=True):
+    return scan_for_focus(field, wl, sz, zmin, zmax, nz, metric="tamura", nb=nb, paraxial=paraxial)
+
+
+def find_best_focus_gini(field, wl, sz, zmin, zmax, tol=None, nb=0, paraxial=True):
+    return find_best_focus(field, wl, sz, zmin, zmax, metric="gini", tol=tol, nb=nb, paraxial=paraxial)
+
+
+def find_best_focus_tamura(field, wl, sz, zmin, zmax, tol=None, nb=0, paraxial=True):
+    return find_best_focus(field, wl, sz, zmin, zmax, metric="tamura", tol=tol, nb=nb, paraxial=paraxial)
