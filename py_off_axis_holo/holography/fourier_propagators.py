@@ -53,7 +53,8 @@ class AngularSpectrum(Convolve):
 
         FX = fx.reshape(1, self.input_shape[1])
         FY = fy.reshape(self.input_shape[0], 1)
-        self._kz = 2*np.pi * np.sqrt(1.0 - (wl * FX) ** 2 - (wl * FY) ** 2) / wl
+        k = 2 * np.pi / wl
+        self._kz = k * np.sqrt(1.0 - wl**2 * (FX + FY) ** 2)
 
     def _kernel(self, z):
         """
@@ -94,7 +95,7 @@ class ParaxialAngularSpectrum(Convolve):
 
         FX = fx.reshape(1, self.input_shape[1])
         FY = fy.reshape(self.input_shape[0], 1)
-        self._kz_approx = 1-np.exp(-1j * np.pi * wl * (FX**2 + FY**2))
+        self._kz_approx = 1 - np.pi * wl * (FX**2 + FY**2)
 
     def _kernel(self, z):
         """
