@@ -18,9 +18,10 @@ Inputs are complex fields (amplitude + phase). All metrics are
 *maximized* at focus.
 """
 
+from __future__ import annotations
+
 import numpy as np
 from numba import njit, prange
-
 from .metrics import gini_sparsity_metric, tamura_sparsity_metric
 
 
@@ -174,9 +175,6 @@ def _golden_section(field, a, b, tol, wl, sz, nb, paraxial, use_gini):
     f0 = _score(_propagate_spectrum(Ft, z0, wl, sz, Ny, Nx, nb, paraxial), use_gini)
     return z0, f0
 
-# --------------------------------------------------------------------------
-# Public API
-# --------------------------------------------------------------------------
 
 def scan_for_focus(field, wl, sz, zmin, zmax, nz, metric="gini", nb=0, paraxial=True):
     """
@@ -194,7 +192,7 @@ def scan_for_focus(field, wl, sz, zmin, zmax, nz, metric="gini", nb=0, paraxial=
 
 
 def find_best_focus(field, wl, sz, zmin, zmax, metric="gini", nz_coarse=41,
-                    tol=None, nb=0, paraxial=True, return_scan=False):
+                    tol=None, nb=0, paraxial=True):
     """
     Locate the in-focus plane in two stages:
 
@@ -211,7 +209,6 @@ def find_best_focus(field, wl, sz, zmin, zmax, metric="gini", nz_coarse=41,
     nz_coarse : int         Number of coarse planes (>= 3). Make the step
                             smaller than the width of the focus peak.
     tol : float or None     Final bracket width. Default (zmax-zmin)*1e-5.
-    return_scan : bool      Also return the coarse (zaxis, scores).
 
     Returns
     -------
@@ -240,9 +237,7 @@ def find_best_focus(field, wl, sz, zmin, zmax, metric="gini", nz_coarse=41,
         z0 = float(zaxis[i])
 
     U0 = propagate(field, z0, wl, sz, nb, paraxial)
-    if return_scan:
-        return z0, U0, (zaxis, scores)
-    return z0, U0
+    return z0, U0, zaxis, scores
 
 
 # --------------------------------------------------------------------------

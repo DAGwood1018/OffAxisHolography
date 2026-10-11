@@ -1,10 +1,3 @@
-import heapq
-import itertools
-import numpy as np
-from ortools.graph.python.min_cost_flow import SimpleMinCostFlow
-
-from .unwrap_utils import wrap_to_pi, calc_residues, residue_density
-
 """
 Minimum-Cost-Flow (MCF) phase unwrapping, in the style of Costantini (1998)
 and SNAPHU's network-flow formulation.
@@ -27,6 +20,15 @@ Pipeline
 4. The corrected (curl-free) gradient field is integrated with a
    flood fill biased towards areas of low residue density.
 """
+
+from __future__ import annotations
+
+import heapq
+import itertools
+import numpy as np
+from ortools.graph.python.min_cost_flow import SimpleMinCostFlow
+from .unwrap_utils import wrap_to_pi, calc_residues, residue_density
+
 
 class UnwrapMCF:
 

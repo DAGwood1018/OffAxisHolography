@@ -12,10 +12,11 @@ since submodularity is no longer guaranteed.
 Requires: pip install ortools numpy
 """
 
+from __future__ import annotations
+
 import numpy as np
 from warnings import warn
 from ortools.graph.python import max_flow
-
 from .unwrap_utils import wrap_to_pi
 
 

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 from numba import njit
 from scipy.ndimage import gaussian_filter

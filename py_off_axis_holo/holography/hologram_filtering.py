@@ -423,9 +423,9 @@ class OffAxisFilter(DFT):
             view_filter(self.forwards(fringes), self._mask)
         return roi, a, b, c
         
-    def set_calibration(self, a, b, c=0, kNA=-1):
+    def set_calibration(self, fp1, c=0, kNA=-1):
         """
-        :param a, b: Known tilt in radians.
+        :param fp1: Locaction of +1 order..
         :param c: Coefficient of quadratic phase shift of reference beam. 0 by default.
         :param kNA: The numerical aperture of the system (in terms of pixels). This determines the radius of the mask.
         If not given, it will be assumed that you aligned system in the most optimal way given location of peak.
@@ -436,8 +436,8 @@ class OffAxisFilter(DFT):
         if self._stacked:
             self.unstack_arrays()
 
-        fp1 = self._get_peak(a, b)
         self._kNA, self._mask, _, _ = off_axis_masks(np.zeros(self.input_shape), fp1=fp1, kNA=kNA)
+        a, b = self._get_tilt(fp1[1], fp1[0])
 
         # Construct digital reference wave
         self._ref = self.create_ref(self._dims[0], self._dims[1], a, b, c)
