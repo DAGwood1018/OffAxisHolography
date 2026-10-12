@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import cv2
 import numpy as np
 from scipy import signal
+from scipy.ndimage import binary_dilation
 from skimage.feature import peak_local_max
 from warnings import warn
 
@@ -183,6 +186,7 @@ def view_filter(Fh, mask):
         return True
     return False
 
+
 def select_mask_roi(Fh):
     """
     :param Fh: Fourier transformed interferogram.
@@ -252,14 +256,14 @@ def off_axis_masks(Fh, fp1=None, kNA=-1):
     :param kNA: The numerical aperture of the system (in terms of pixels). This determines the radius of the mask.
     If not given, it will be assumed that you aligned system in the most optimal way given location of peak.
     :type kNA: float
-    :return: Used radius, Mask at +1, mask at 0, mask at -1.
+    :return: Used radius, Mask at 0, mask at +1, mask at -1.
     :rtype: float, tuple<ndarray, ndarray, ndarray>
     """
 
-    fp1 = np.array(fp1)
     if fp1 is None:
         _, fp1 = select_mask_roi(Fh)
     else:
+        fp1 = np.array(fp1)
         assert len(fp1) == 2, "Peak coordinates have the wrong dimensionality."
         assert fp1[0] < Fh.shape[0] and fp1[1] < Fh.shape[1], "Invalid peak position given."
 
@@ -280,3 +284,85 @@ def off_axis_masks(Fh, fp1=None, kNA=-1):
     return r_k, mask00, mask10, mask01
 
 
+def full_bandpass(shape, fp1, nb=0):
+    """
+    Creates a full bandpass filter for all orders. If nb is nonzero then the image is assumed to be padded
+    and the filter is given for the unpadded image.
+
+    """
+
+    ny, nx = shape
+    n_pad = np.max(ny, nx) + 2 * nb
+    kNA_pad = int(np.hypot(fp1[0] - (np.max(ny, nx) + 2 * nb) / 2,
+                fp1[1] - (np.max(ny, nx) + 2 * nb) / 2) / 3)
+
+    c = n_pad / 2
+    sy, sx = (fp1[0] - c) / n_pad, (fp1[1] - c) / n_pad
+    rk = kNA_pad / n_pad
+    fy = (np.arange(ny) - ny // 2) / ny
+    fx = (np.arange(nx) - nx // 2) / nx
+    FY, FX = np.meshgrid(fy, fx, indexing='ij')
+    m = np.hypot(FY - sy, FX - sx) <= rk
+    m |= np.hypot(FY + sy, FX + sx) <= rk
+    m |= np.hypot(FY, FX) <= 2.0 * rk
+    return m
+
+
+def desaturate(holo, bp_filter, sat_level=None, n_iter=300, ndilate=1, tol=1e-4):
+    """
+    Fill saturated (clipped) pixels of a hologram by band-limited
+    extrapolation (Gerchberg-Papoulis with an inequality constraint).
+
+    Alternates between
+      * projecting onto the known Fourier support of the hologram, and
+      * restoring every unsaturated pixel to its measured value while
+        forcing saturated pixels to stay >= sat_level.
+
+    :param holo: raw hologram (2-D).
+    :param bp_filter: boolean Fourier bandpass filter.
+    :param sat_level: clipping level; default = img.max().
+    :param ndilate: dilate the saturated set by this many pixels (pixels next to
+        a clipped one are often also non-linear).
+    :return: repaired float hologram, boolean mask of replaced pixels.
+    """
+
+    holo = np.asarray(holo, float)
+    if sat_level is None:
+        sat_level = holo.max()
+    sat = holo >= sat_level
+    if ndilate:
+        sat_g = binary_dilation(sat, iterations=ndilate)
+    else:
+        sat_g = sat
+    if not sat.any():
+        return holo.copy(), sat
+
+    sup = np.fft.ifftshift(bp_filter)
+    x = holo.copy()
+    known = ~sat_g
+    for it in range(n_iter):
+        X = np.fft.fft2(x)
+        X[~sup] = 0
+        y = np.real(np.fft.ifft2(X))
+
+        # constraints
+        y_new = y.copy()
+        y_new[known] = holo[known]
+        clip = sat & (y_new < sat_level)
+        y_new[clip] = sat_level
+        change = np.linalg.norm((y_new - x)[sat_g]) / (np.linalg.norm(x[sat_g]) + 1e-12)
+        x = y_new
+
+        if change < tol:
+            break
+    return x, sat_g
+
+
+def obj_to_cam_z(z_obj, mag=1.0):
+    """Longitudinal magnification: dz_cam = mag**2 * dz_obj."""
+    return z_obj * mag ** 2
+
+
+def cam_to_obj_z(z_cam, mag=1.0):
+    """Inverse of obj_to_cam_z."""
+    return z_cam / mag ** 2

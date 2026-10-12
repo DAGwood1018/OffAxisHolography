@@ -300,7 +300,8 @@ class OffAxisFilter(DFT):
 
         :param window_fcn: Window function that takes dimensions as argument.
         :param kwargs: Any optiona arguments for the window function.
-        :return:
+        :return: True if sucessful. False otherwise.
+        :rtype: bool
         """
 
         if not self.calibrated:
@@ -315,6 +316,20 @@ class OffAxisFilter(DFT):
                 warn("Invalid window function provided.")
                 return False
         return False
+
+    def out_pxl_sz(self, mag=1.0):
+        """
+        Size of pixels after filtering.
+
+        :param mag: The magnification of the imaging system.
+        :type mag: float
+        :return: Output pixel size.
+        :rtype: float
+        """
+
+        n_in = self.input_shape[0]
+        n_out = self.output_shape[0]
+        return self._sz * n_in / n_out / mag
 
     def create_ref(self, M, N, a, b, c=0):
         """
@@ -425,7 +440,7 @@ class OffAxisFilter(DFT):
         
     def set_calibration(self, fp1, c=0, kNA=-1):
         """
-        :param fp1: Locaction of +1 order..
+        :param fp1: Locaction of +1 order.
         :param c: Coefficient of quadratic phase shift of reference beam. 0 by default.
         :param kNA: The numerical aperture of the system (in terms of pixels). This determines the radius of the mask.
         If not given, it will be assumed that you aligned system in the most optimal way given location of peak.
