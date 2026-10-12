@@ -327,8 +327,9 @@ class OffAxisFilter(DFT):
         :rtype: float
         """
 
-        n_in = self.input_shape[0]
-        n_out = self.output_shape[0]
+        # last axis: works for stacked arrays too (grids are square)
+        n_in = self.input_shape[-1]
+        n_out = self.output_shape[-1]
         return self._sz * n_in / n_out / mag
 
     def create_ref(self, M, N, a, b, c=0):

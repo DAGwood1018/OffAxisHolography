@@ -117,7 +117,7 @@ class PairPropagator:
     def __init__(self, S, B, wl=633e-9, sz=1.0, nb=128, upsample=1, paraxial=True,
                  threads=1, dtype='complex128', **kwargs):
         """
-        Propagates an object field S and (optionally) a background field B on a
+        Propagates an object field S and a background field B on a
         common grid using AngularSpectrum / ParaxialAngularSpectrum. The spectra
         are computed once, so scanning many planes only costs one inverse FFT per
         field per plane.
@@ -146,7 +146,7 @@ class PairPropagator:
         """
 
         assert isinstance(upsample, int) and upsample >= 1, "upsample must be an integer >= 1."
-        assert B is None or B.shape == S.shape, "S and B must have the same shape."
+        assert B.shape == S.shape, "S and B must have the same shape."
 
         M, N = S.shape
         prop_cls = ParaxialAngularSpectrum if paraxial else AngularSpectrum
@@ -170,6 +170,25 @@ class PairPropagator:
             self._up_shape = tuple(int(p) * upsample for p in P)
             self._ifft_up = DiscreteTransform(self._up_shape, 'FFTW_BACKWARD', dtype,
                                               threads=threads)
+
+    def __call__(self, z, eps=1e-3):
+        """
+        Object field divided by background field, both propagated to z:
+        t(z) = P_z{S} / P_z{B}, regularised where |B| is small.
+
+        :param z: Distance to propagate.
+        :type z: float
+        :param eps: Regularisation relative to mean |B|^2. Default is 1e-3.
+        :type eps: float
+        :return: t(z).
+        :rtype: ndarray
+        """
+
+        H = self._kernel(z)
+        s = self._back(self._FS * H)
+        b = self._back(self._FB * H)
+        b2 = np.abs(b) ** 2
+        return s * np.conj(b) / (b2 + eps * b2.mean())
 
     def _kernel(self, z):
         return self._prop._kernel(z)
@@ -212,27 +231,4 @@ class PairPropagator:
         :rtype: ndarray
         """
 
-        if self._FB is None:
-            raise ValueError("No background field was given.")
         return self._back(self._FB * self._kernel(z))
-
-    def ratio(self, z, eps=1e-3):
-        """
-        Object field divided by background field, both propagated to z:
-        t(z) = P_z{S} / P_z{B}, regularised where |B| is small.
-
-        :param z: Distance to propagate.
-        :type z: float
-        :param eps: Regularisation relative to mean |B|^2. Default is 1e-3.
-        :type eps: float
-        :return: t(z).
-        :rtype: ndarray
-        """
-
-        H = self._kernel(z)
-        s = self._back(self._FS * H)
-        if self._FB is None:
-            return s
-        b = self._back(self._FB * H)
-        b2 = np.abs(b) ** 2
-        return s * np.conj(b) / (b2 + eps * b2.mean())

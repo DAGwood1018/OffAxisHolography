@@ -2,8 +2,8 @@
 Autofocus for transparent (pure-phase) objects using the transport-of-
 intensity equation (TIE).
 
-Why not the sparsity metrics in metrics.py / focal_scans.py?
-------------------------------------------------------------
+Why not sparsity metrics (Gini index, Tamura coefficient)?
+-----------------------------------------------------------
 Gini / Tamura reward concentrated energy and sharp edges, which is what
 "in focus" means for amplitude objects. A transparent object (e.g. a fluid
 surface) has *uniform* amplitude at its own plane; intensity contrast only
@@ -28,14 +28,15 @@ plane:  t(z) = P_z{S} / P_z{B}.
 
 Main entry points
 -----------------
-    filtered_pixel_size(spfilter, sz_cam, mag)     pixel pitch of OffAxisFilter output
+    OffAxisFilter.out_pxl_sz(mag)                  pixel pitch of OffAxisFilter output
     PairPropagator (holography.fourier_propagators) cached propagation of an S/B pair
     tie_defocus(t, wl, sz, mask)                   one-plane TIE estimate of z - z_f
     find_focus_tie(S, B, wl, sz, zmin, zmax, ...)  scan + zero crossing -> z_f
     tie_focus_iterate(prop, z_start, mask)         Newton-like refinement
+    tune_tie_bands(prop, zmin, zmax, ...)          choose hp_sigma / lp_sigma
 
 Units: wl, sz, z in metres (any consistent unit works). Use the pixel pitch
-of the field you pass in (see filtered_pixel_size) in the space where you
+of the field you pass in (see OffAxisFilter.out_pxl_sz) in the space where you
 want z (object space: divide the camera pitch by the lateral magnification).
 """
 
@@ -94,14 +95,24 @@ def tie_defocus(t, wl, sz, mask=None, hp_sigma=25.0, lp_sigma=2.0):
     :return: (z - z_focus, correlation coefficient of the regression).
         |corr| near 0 means the plane carries no usable phase structure.
     """
+
+    li, lap = _tie_terms(t, sz)
+    bp = lambda a: gaussian_filter(a, lp_sigma) - gaussian_filter(a, hp_sigma)
+    if mask is None:
+        mask = np.ones(t.shape, bool)
+    return _tie_regress(bp(lap)[mask], bp(li)[mask], wl)
+
+
+def _tie_terms(t, sz):
+    """ln I and the phase Laplacian (rad/length^2) of a complex field."""
     I = np.abs(t) ** 2
     li = np.log(I + 1e-12 * I.mean())
     lap = wrapped_laplacian(t) / sz ** 2
-    bp = lambda a: gaussian_filter(a, lp_sigma) - gaussian_filter(a, hp_sigma)
-    li, lap = bp(li), bp(lap)
-    if mask is None:
-        mask = np.ones(t.shape, bool)
-    x, y = lap[mask], li[mask]
+    return li, lap
+
+
+def _tie_regress(x, y, wl):
+    """Regress band-passed ln I (y) on band-passed lap(phi) (x) -> (z - z_f, corr)."""
     slope = np.dot(x, y) / np.dot(x, x)
     corr = np.corrcoef(x, y)[0, 1]
     return -2 * np.pi * slope / wl, corr
@@ -113,11 +124,12 @@ def scan_tie(prop, zmin, zmax, dz, mask=None, hp_sigma=25.0, lp_sigma=2.0):
 
     :return: zaxis, offsets, correlations. Near the focus offsets ~ z - z_f.
     """
+
     zaxis = np.arange(zmin, zmax + dz / 2, dz)
     offs = np.empty(zaxis.size)
     corr = np.empty(zaxis.size)
     for i, z in enumerate(zaxis):
-        offs[i], corr[i] = tie_defocus(prop.ratio(z), prop.wl, prop.sz, mask,
+        offs[i], corr[i] = tie_defocus(prop(z), prop.wl, prop.sz, mask,
                                        hp_sigma=hp_sigma, lp_sigma=lp_sigma)
     return zaxis, offs, corr
 
@@ -146,7 +158,7 @@ def tie_focus_iterate(prop, z_start=0.0, mask=None, n_iter=8, tol=0.2e-3, **kw):
     """
     z, hist = float(z_start), []
     for _ in range(n_iter):
-        dz, c = tie_defocus(prop.ratio(z), prop.wl, prop.sz, mask, **kw)
+        dz, c = tie_defocus(prop(z), prop.wl, prop.sz, mask, **kw)
         hist.append((z, dz, c))
         z -= dz
         if abs(dz) < tol:
@@ -154,30 +166,32 @@ def tie_focus_iterate(prop, z_start=0.0, mask=None, n_iter=8, tol=0.2e-3, **kw):
     return z, hist
 
 
-def find_focus_tie(S, B, wl, sz, zmin, zmax, dz=None, mask=None, nb=128,
-                   hp_sigma=25.0, lp_sigma=2.0, refine=True, paraxial=True,
-                   threads=1, return_scan=False):
+def find_focus_tie(S, B, wl, sz, zmin, zmax, dz=None,
+                   mask=None, hp_sigma=15.0, lp_sigma=2.0,
+                   nb=0, paraxial=True, threads=1):
     """
     Find the object plane of a transparent object from an object/background
     field pair.
 
     1. Scan the TIE defocus estimate over [zmin, zmax].
     2. Take the upward zero crossing whose slope is closest to 1.
-    3. Optionally refine with tie_focus_iterate.
+    3. Refine with tie_focus_iterate (kept only if it stays within 2*dz).
 
-    :param S, B: object and background fields (B may be None).
-    :param wl, sz: wavelength and pixel pitch of S/B (see filtered_pixel_size).
+    :param S, B: object and background fields. To propagate an already
+        divided field t = S/B, pass (t, np.ones_like(t)).
+    :param wl, sz: wavelength and pixel pitch of S/B (see OffAxisFilter.out_pxl_sz).
     :param zmin, zmax: search range (same units, same space as sz).
     :param dz: scan step; default (zmax - zmin) / 40.
-    :param mask: pixels to use; default default_mask(t(0)).
+    :param mask: pixels to use; default focusing_mask(t(0)).
     :param nb: zero padding for propagation.
     :param threads: FFT threads.
-    :return: z_focus, t(z_focus)  [, (zaxis, offsets, correlations)]
-        z_focus is NaN if no zero crossing was found.
+    :return: z_focus, t(z_focus). z_focus is NaN (and t None) if no zero
+        crossing was found. Use scan_tie on a PairPropagator to get the curve.
     """
+
     prop = PairPropagator(S, B, wl, sz, nb=nb, paraxial=paraxial, threads=threads)
     if mask is None:
-        mask = focusing_mask(prop.ratio(0.0))
+        mask = focusing_mask(prop(0.0))
     if dz is None:
         dz = (zmax - zmin) / 40
     zaxis, offs, corr = scan_tie(prop, zmin, zmax, dz, mask, hp_sigma, lp_sigma)
@@ -187,11 +201,9 @@ def find_focus_tie(S, B, wl, sz, zmin, zmax, dz=None, mask=None, nb=128,
         t0 = None
     else:
         z0 = min(cross, key=lambda c: abs(c[1] - 1))[0]
-        if refine:
-            z1, _ = tie_focus_iterate(prop, z0, mask, hp_sigma=hp_sigma, lp_sigma=lp_sigma)
-            if abs(z1 - z0) <= 2 * abs(dz):     # guard against drifting on noisy data
-                z0 = z1
-        t0 = prop.ratio(z0)
-    if return_scan:
-        return z0, t0, (zaxis, offs, corr)
+        z1, _ = tie_focus_iterate(prop, z0, mask, hp_sigma=hp_sigma, lp_sigma=lp_sigma)
+        if abs(z1 - z0) <= 2 * abs(dz):     # guard against drifting on noisy data
+            z0 = z1
+        t0 = prop(z0)
     return z0, t0
+
