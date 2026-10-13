@@ -274,8 +274,7 @@ class OffAxisFilter(DFT):
         coords = np.argwhere(self._mask)
         m_min, n_min = coords.min(axis=0)
         m_max, n_max = coords.max(axis=0)
-        return bf[:, m_min:m_max, n_min:n_max] \
-            if self._stacked else b[m_min:m_max, n_min:n_max]
+        return bf[..., m_min:m_max, n_min:n_max]
 
     def backwards(self, b):
         """

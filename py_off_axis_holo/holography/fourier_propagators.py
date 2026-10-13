@@ -114,23 +114,30 @@ class ParaxialAngularSpectrum(Convolve):
 
 class PairPropagator:
 
-    def __init__(self, S, B, wl=633e-9, sz=1.0, nb=128, upsample=1, paraxial=True,
-                 threads=1, dtype='complex128', **kwargs):
+    def __init__(self, M, N, wl, sz, nb=0, upsample=1, paraxial=True, threads=1,
+                 dtype='complex128', **kwargs):
         """
-        Propagates an object field S and a background field B on a
-        common grid using AngularSpectrum / ParaxialAngularSpectrum. The spectra
-        are computed once, so scanning many planes only costs one inverse FFT per
-        field per plane.
+        Propagates object fields S and background fields B of shape (M, N), or
+        stacks of them with shape (K, M, N), and returns t(z) = P_z{S} / P_z{B}.
+        Uses a single ParaxialAngularSpectrum / AngularSpectrum whose stack size is
+        switched (stack_arrays / unstack_arrays) to match the input. Switching is
+        cheap after the first time a size is used, since FFTW reuses its plans.
 
-        :param S: Object field.
-        :type S: ndarray<complex>
-        :param B: Background field with the same shape as S.
-        :type B: ndarray<complex>
+        Typical use:
+            prop = PairPropagator(M, N, wl, sz)
+            t = prop(S, B, z)                     # S, B: (M, N) or (K, M, N)
+
+        For scans over many z, compute the spectra once:
+            FS, FB = prop.spectrum(S), prop.spectrum(B)
+            t = prop.ratio_from_spectra(FS, FB, z)
+
+        :param M, N: Image dimensions.
+        :type M, N: int
         :param wl: The wavelength.
         :type wl: float
-        :param sz: The pixel size of S and B.
+        :param sz: The pixel size of the input fields.
         :type sz: float
-        :param nb: Padding to use. Default is 128.
+        :param nb: Padding to use. Default is 0.
         :type nb: int
         :param upsample: Integer band-limited (sinc) upsampling factor of the output. Adds no
             information but reduces the per-pixel phase gradient, which helps phase unwrapping.
@@ -145,53 +152,76 @@ class PairPropagator:
         :param kwargs: Additional parameters to create discrete transforms.
         """
 
-        assert isinstance(upsample, int) and upsample >= 1, "upsample must be an integer >= 1."
-        assert B.shape == S.shape, "S and B must have the same shape."
-
-        M, N = S.shape
-        prop_cls = ParaxialAngularSpectrum if paraxial else AngularSpectrum
-        self._prop = prop_cls(M, N, wl, sz, nb=nb, threads=threads, dtype=dtype, **kwargs)
-
+        assert isinstance(upsample, (int, np.integer)) and upsample >= 1, "upsample must be an integer >= 1."
+        self.shape = (int(M), int(N))
         self.wl = wl
         self.paraxial = paraxial
-        self.shape = (M, N)
-        self.up = upsample
-        self.sz = sz / upsample              # pixel size of the returned fields
+        self.up = int(upsample)
+        self.sz = sz / self.up              # pixel size of the returned fields
         self._nb = nb
+        self._threads = threads
+        self._dtype = dtype
 
-        # Spectra (fftshift-ed, padded grid) computed once
-        self._FS = self._prop.forwards(S)
-        self._FB = self._prop.forwards(B)
+        prop_cls = ParaxialAngularSpectrum if paraxial else AngularSpectrum
+        self._prop = prop_cls(M, N, wl, sz, nb=nb, threads=threads, dtype=dtype, **kwargs)
+        self._k = 0                          # current stack size of self._prop (0 = unstacked)
+        self._ifft_up = None                 # inverse transform on the upsampled grid
+        self._k_up = None                    # its stack size
+        self._pad_shape = (int(self._prop.input_shape[0]), int(self._prop.input_shape[1]))
+        self._up_shape = (self._pad_shape[0] * self.up, self._pad_shape[1] * self.up)
 
-        # Inverse transform on the upsampled grid
-        self._ifft_up = None
-        if upsample > 1:
-            P = np.array(self._prop.input_shape)
-            self._up_shape = tuple(int(p) * upsample for p in P)
-            self._ifft_up = DiscreteTransform(self._up_shape, 'FFTW_BACKWARD', dtype,
-                                              threads=threads)
-
-    def __call__(self, z, eps=1e-3):
+    def __call__(self, S, B, z, eps=1e-3):
         """
         Object field divided by background field, both propagated to z:
         t(z) = P_z{S} / P_z{B}, regularised where |B| is small.
 
-        :param z: Distance to propagate.
-        :type z: float
-        :param eps: Regularisation relative to mean |B|^2. Default is 1e-3.
+        :param S: Object field(s), shape (M, N) or (K, M, N).
+        :type S: ndarray
+        :param B: Background field(s), shape (M, N) or (K, M, N). A single (M, N)
+            background is used for every array of a stacked S.
+        :type B: ndarray
+        :param z: Distance to propagate: scalar, or one value per stacked array.
+        :type z: float or ndarray
+        :param eps: Regularisation relative to mean |B|^2 (per array). Default is 1e-3.
         :type eps: float
-        :return: t(z).
+        :return: t(z), same stacking as S.
         :rtype: ndarray
         """
 
-        H = self._kernel(z)
-        s = self._back(self._FS * H)
-        b = self._back(self._FB * H)
-        b2 = np.abs(b) ** 2
-        return s * np.conj(b) / (b2 + eps * b2.mean())
+        kS, kB = self._stack_size(S), self._stack_size(B)
+        if kB not in (0, kS):
+            raise ValueError("B must be a single field or have the same stack size as S.")
+        return self.ratio_from_spectra(self.spectrum(S), self.spectrum(B), z, eps=eps)
 
-    def _kernel(self, z):
-        return self._prop._kernel(z)
+    def _stack_size(self, a):
+        """0 for a single (M, N) array, K for a (K, M, N) stack."""
+
+        a = np.asarray(a)
+        if a.shape[-2:] != self.shape or a.ndim not in (2, 3):
+            raise ValueError(f"Expected shape {self.shape} or (K, {self.shape[0]}, {self.shape[1]}), "
+                             f"got {a.shape}.")
+        return 0 if a.ndim == 2 else a.shape[0]
+
+    def _set_stack(self, k):
+        """Switch the propagator's transforms to stack size k (0 = unstacked)."""
+
+        if k == self._k:
+            return
+        if k == 0:
+            self._prop.unstack_arrays()
+        else:
+            self._prop.stack_arrays(int(k))
+        self._k = k
+
+    def _kernel(self, z, k):
+        """Transfer function for scalar z, or one z per stacked array."""
+
+        z = np.asarray(z, dtype=float)
+        if z.ndim == 0:
+            return self._prop._kernel(float(z))
+        if k == 0 or z.shape != (k,):
+            raise ValueError("z must be a scalar or have one value per stacked array.")
+        return self._prop._kernel(z[:, None, None])
 
     def _back(self, F):
         """
@@ -199,36 +229,88 @@ class PairPropagator:
         remove padding.
         """
 
+        k = 0 if F.ndim == 2 else F.shape[0]
         if self.up == 1:
+            self._set_stack(k)
             return self._prop.backwards(F)
 
-        P = F.shape
-        G = np.zeros(self._up_shape, dtype=F.dtype)
+        if self._k_up != k:
+            self._ifft_up = DiscreteTransform(self._up_shape, 'FFTW_BACKWARD', self._dtype,
+                                              threads=self._threads, nstack=int(k))
+            self._k_up = k
+        P = self._pad_shape
+        G = np.zeros(F.shape[:-2] + self._up_shape, dtype=F.dtype)
         # keep DC (index P//2 after fftshift) at the centre of the larger grid
         oy = (self.up * P[0]) // 2 - P[0] // 2
         ox = (self.up * P[1]) // 2 - P[1] // 2
-        G[oy:oy + P[0], ox:ox + P[1]] = F
+        G[..., oy:oy + P[0], ox:ox + P[1]] = F
         # DFT.forwards already applies the 1/N scaling (normalise_idft=False), so the
         # inverse here is unscaled, as in DFT.backwards
-        u = self._ifft_up(np.fft.ifftshift(G), ortho=False, normalise_idft=False)
-        return unpad_arr(u, self._nb * self.up)
+        u = self._ifft_up(np.fft.ifftshift(G, axes=(-2, -1)), ortho=False, normalise_idft=False)
+        b = self._nb * self.up
+        return u[..., b:u.shape[-2] - b, b:u.shape[-1] - b] if b > 0 else u
 
-    def object(self, z):
+    def spectrum(self, u):
         """
-        :param z: Distance to propagate.
-        :type z: float
-        :return: P_z{S}.
+        :param u: Field of shape (M, N) or stack (K, M, N).
+        :type u: ndarray
+        :return: Padded, fftshift-ed spectrum (same stacking as u).
         :rtype: ndarray
         """
 
-        return self._back(self._FS * self._kernel(z))
+        self._set_stack(self._stack_size(u))
+        return self._prop.forwards(u)
 
-    def background(self, z):
+    def propagate_spectrum(self, F, z):
         """
-        :param z: Distance to propagate.
-        :type z: float
-        :return: P_z{B}.
+        :param F: Spectrum from spectrum().
+        :type F: ndarray
+        :param z: Distance to propagate: scalar, or one value per stacked array.
+        :type z: float or ndarray
+        :return: P_z{u}.
         :rtype: ndarray
         """
 
-        return self._back(self._FB * self._kernel(z))
+        k = 0 if F.ndim == 2 else F.shape[0]
+        return self._back(F * self._kernel(z, k))
+
+    def propagate(self, u, z):
+        """
+        :param u: Field of shape (M, N) or stack (K, M, N).
+        :type u: ndarray
+        :param z: Distance to propagate: scalar, or one value per stacked array.
+        :type z: float or ndarray
+        :return: P_z{u}.
+        :rtype: ndarray
+        """
+
+        return self.propagate_spectrum(self.spectrum(u), z)
+
+    def ratio_from_spectra(self, FS, FB, z, eps=1e-3):
+        """
+        t(z) = P_z{S} / P_z{B} from precomputed spectra. FB may be a single
+        spectrum shared by every array of a stacked FS (common background).
+
+        :param FS: Spectrum of S from spectrum().
+        :type FS: ndarray
+        :param FB: Spectrum of B from spectrum().
+        :type FB: ndarray
+        :param z: Distance to propagate: scalar, or one value per stacked array.
+        :type z: float or ndarray
+        :param eps: Regularisation relative to mean |B|^2 (per array). Default is 1e-3.
+        :type eps: float
+        :return: t(z).
+        :rtype: ndarray
+        """
+
+        k = 0 if FS.ndim == 2 else FS.shape[0]
+        H = self._kernel(z, k)
+        s = self._back(FS * H)
+        if FB.ndim == 2 and k > 0 and np.ndim(z) == 0:
+            b = self._back(FB * H)[None]                   # shared background, same z
+        else:
+            if FB.ndim == 2 and k > 0:
+                FB = np.broadcast_to(FB, FS.shape)
+            b = self._back(FB * H)
+        b2 = np.abs(b) ** 2
+        return s * np.conj(b) / (b2 + eps * b2.mean(axis=(-2, -1), keepdims=True))

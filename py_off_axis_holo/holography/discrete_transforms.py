@@ -373,6 +373,14 @@ class DFT:
             nb_arr[0] = 0
         return unpad_arr(b, nb_arr)
 
+    def _shift_axes(self, a):
+        """
+        Axes to (i)fftshift: every axis except the stack axis, so stacked
+        arrays keep their order.
+        """
+
+        return tuple(range(1, a.ndim)) if self._stacked else None
+
     def forwards(self, a):
         """
         Forward Fourier transform
@@ -386,7 +394,8 @@ class DFT:
         if self._nb_pad > 0:
             a = self.pad_array(a)
         assert tuple(a.shape) == self.input_shape, "Shape of array must be " + str(self.input_shape)
-        return np.fft.fftshift(self._fft(a.astype(self._fft.dtype), ortho=self._ortho, normalise_idft=False))
+        b = self._fft(a.astype(self._fft.dtype), ortho=self._ortho, normalise_idft=False)
+        return np.fft.fftshift(b, axes=self._shift_axes(b))
 
     def backwards(self, b):
         """
@@ -399,7 +408,8 @@ class DFT:
         """
 
         assert tuple(b.shape) == self.output_shape, "Shape of array must be " + str(self.output_shape)
-        a = self._ifft(np.fft.ifftshift(b.astype(self._ifft.dtype)), ortho=self._ortho, normalise_idft=False)
+        b = np.fft.ifftshift(b.astype(self._ifft.dtype), axes=self._shift_axes(b))
+        a = self._ifft(b, ortho=self._ortho, normalise_idft=False)
         if self._nb_unpad > 0:
             return self.unpad_array(a)
         return a
@@ -407,7 +417,7 @@ class DFT:
     def stack_arrays(self, n):
         """
         Adds another dimension that is not transformed allowing for multiple arrays to be processed at once.
-        However, order will not be preserved.
+        The stack axis is not shifted, so the order of the arrays is preserved.
 
         :param n: How many arrays you want to process.
         :type n: int
