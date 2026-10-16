@@ -2,7 +2,6 @@ from warnings import warn
 import numpy as np
 
 from py_off_axis_holo.holography.discrete_transforms import DFT, DiscreteTransform
-from py_off_axis_holo.holography.fourier_propagators import AngularSpectrum
 from py_off_axis_holo.holography.holography_helpers import select_mask_roi, find_peak_in_roi, off_axis_masks, view_filter
 
 
@@ -73,17 +72,17 @@ class OffAxisFilter(DFT):
         a = self.backwards(bf)
         return a
 
-    def _get_tilt(self, px, py):
+    def _get_tilt(self, fp1):
         """
-        Calculates tilt from frequency coordinates. f is
-        assumed to be relative to the center coordinates.
+        Calculates tilt from the position of the +1 order on the padded grid.
 
-        :param fx, fy: Frequency coords of +/-1 order.
-        :type fx, fy: float
-        :return: Tilt in radians.
+        :param fp1: (row, col) of the +1 order.
+        :type fp1: array-like
+        :return: Tilt in radians (x, y).
         :rtype: ndarray
         """
 
+        py, px = fp1
         M, N = self._dims + 2*self._nb_pad
         fx, fy = (px - N/2) / (N*self._sz), (py - M/2) / (M*self._sz)
 
@@ -95,9 +94,9 @@ class OffAxisFilter(DFT):
         """
         Calculates position of peak coordinates from tilt.
 
-        :param a, b: Tilt of the reference beam in radians.
+        :param a, b: Tilt of the reference beam in radians (x, y).
         :type a, b: float
-        :return: Coords of +/-1 order.
+        :return: (row, col) of the +1 order.
         :rtype: ndarray
         """
 
@@ -107,7 +106,7 @@ class OffAxisFilter(DFT):
 
         px = N*self._sz*f[0] + N/2
         py = M*self._sz*f[1] + M/2
-        return np.array([px, py])
+        return np.array([py, px])
 
     def _fit_ref(self, U, weights=None, tol=1e-12):
         """
@@ -377,17 +376,17 @@ class OffAxisFilter(DFT):
 
         return 2 * np.abs(self.__call__(fringes)) / self.intensity(fringes)
 
-    def calibrate(self, fringes, dz=0, kNA=-1, roi=None, optimize=True, visualize=False, **kwargs):
+    def calibrate(self, fringes, kNA=-1, roi=None, optimize=True, visualize=False, **kwargs):
         """
         :param fringes: Hologram (typically of background) to calibrate phase filtering to.
-        :param dz: A small distance to propagate the fringes by. By assuming telecentricity this is used to isolate tilt + aberrations from signal.
         :param kNA: The known numerical aperture of the system in terms of pixels. Overrides the automatic radius of the mask if not None.
         :param roi: A pre-selected ROI to calibrate with.
         :param optimize: Optimize the mask center according to some cost function.
         :param visualize: Show image of mask.
         :param kwargs: Optional arguments to optimization routine.
-        :return: The ROI mask you select for calibration and reference beam fit parameters
-        :rtype: ndarray, float, float, float
+        :return: The ROI you selected, fp1 = (row, col) of the +1 order on the padded spectrum
+            (can be passed to set_calibration), and the quadratic coefficient c of the reference.
+        :rtype: tuple, ndarray, float
         """
 
         if self.calibrated:
@@ -406,7 +405,7 @@ class OffAxisFilter(DFT):
 
         # Construct digital reference wave
         c = 0
-        a, b = self._get_tilt(fp1[1], fp1[0])
+        a, b = self._get_tilt(fp1)
         self._ref = self.create_ref(self._dims[0], self._dims[1], a, b, c)
         self._crop_ifft(2 * self._kNA, 2 * self._kNA)
 
@@ -414,13 +413,6 @@ class OffAxisFilter(DFT):
         if optimize:
             try:
                 U = self(fringes)
-                if dz > 0 or dz < 0:
-                    prop = AngularSpectrum(U.shape[0], U.shape[1],
-                                           2 * np.pi / self._k0, self._sz, nb=self._nb_pad)
-                    Uz = prop(U, dz)
-                    U = Uz * U.conj()
-                    del prop
-
                 da, db, c = self._fit_ref(U, **kwargs)
                 a += da
                 b += db
@@ -436,11 +428,11 @@ class OffAxisFilter(DFT):
         self._fit_params = (a, b, c)
         if visualize:
             view_filter(self.forwards(fringes), self._mask)
-        return roi, a, b, c
+        return roi, fp1, c
         
     def set_calibration(self, fp1, c=0, kNA=-1):
         """
-        :param fp1: Locaction of +1 order.
+        :param fp1: Location (row, col) of the +1 order on the padded spectrum, as returned by calibrate().
         :param c: Coefficient of quadratic phase shift of reference beam. 0 by default.
         :param kNA: The numerical aperture of the system (in terms of pixels). This determines the radius of the mask.
         If not given, it will be assumed that you aligned system in the most optimal way given location of peak.
@@ -452,7 +444,7 @@ class OffAxisFilter(DFT):
             self.unstack_arrays()
 
         self._kNA, self._mask, _, _ = off_axis_masks(np.zeros(self.input_shape), fp1=fp1, kNA=kNA)
-        a, b = self._get_tilt(fp1[1], fp1[0])
+        a, b = self._get_tilt(fp1)
 
         # Construct digital reference wave
         self._ref = self.create_ref(self._dims[0], self._dims[1], a, b, c)

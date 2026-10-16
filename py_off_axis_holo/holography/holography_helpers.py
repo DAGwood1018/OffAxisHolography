@@ -7,7 +7,7 @@ import numba as nb
 import numpy as np
 import scipy.fft
 from scipy import signal
-from scipy.ndimage import binary_dilation
+from scipy.ndimage import binary_dilation, gaussian_filter
 from skimage.feature import peak_local_max
 from warnings import warn
 
@@ -105,6 +105,31 @@ def ellip_tukey_window(dims, alpha=0.1):
     window = ref[idx_from_center]
     window[rho > 1] = 0
     return window
+
+
+def gaussian_bandpass(a, lp_sigma=2.0, hp_sigma=15.0):
+    """
+    Difference-of-Gaussians band-pass over the last two axes, so it works on a
+    single image (M, N) or a stack (K, M, N). Keeps spatial scales between about
+    lp_sigma and hp_sigma pixels.
+
+    Default band-pass for the TIE autofocus (tie_autofocus). To use other
+    widths pass e.g. functools.partial(gaussian_bandpass, lp_sigma=3, hp_sigma=30).
+    A band-pass may return NaN for pixels that should be ignored (e.g. a border
+    or a dead region); the TIE regression skips them.
+
+    :param a: Image or stack of images.
+    :type a: ndarray
+    :param lp_sigma: Sigma (pixels) of the noise smoothing. Default is 2.
+    :type lp_sigma: float
+    :param hp_sigma: Sigma (pixels) of the slow part that is removed. Default is 15.
+    :type hp_sigma: float
+    :return: Band-passed image(s).
+    :rtype: ndarray
+    """
+
+    sig = lambda s: (0,) * (a.ndim - 2) + (s, s)
+    return gaussian_filter(a, sig(lp_sigma)) - gaussian_filter(a, sig(hp_sigma))
 
 
 def pad_arr(a, nb):
