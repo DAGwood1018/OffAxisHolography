@@ -77,7 +77,7 @@ def residue_density(residues, sigma=3.0):
     return density
 
 
-def calc_stat_costs(contrast, nlevels=2**16 - 1, eps=1e-9):
+def stat_edge_costs(contrast, nlevels=2 ** 16 - 1, eps=1e-9):
     """
     Statistically-motivated integer edge costs, replacing the ad hoc
     "-log(contrast)" transform with the actual interferometric phase-noise
@@ -139,7 +139,7 @@ def calc_stat_costs(contrast, nlevels=2**16 - 1, eps=1e-9):
     return cost_h, cost_v
 
 
-def calc_log_costs(contrast, nlevels=2**16 - 1, eps=1e-9):
+def log_edge_costs(contrast, nlevels=2 ** 16 - 1, eps=1e-9):
     """
     Compute integer edge costs for MCF phase unwrapping
     using fringe contrast (visibility) as the coherence measure.
@@ -189,7 +189,7 @@ def calc_log_costs(contrast, nlevels=2**16 - 1, eps=1e-9):
     return cost_h, cost_v
 
 
-def calc_lin_costs(contrast, nlevels=2**16 - 1):
+def lin_edge_costs(contrast, nlevels=2 ** 16 - 1):
     """
     Compute integer edge costs for MCF phase unwrapping
     using fringe contrast (visibility) as the coherence measure.

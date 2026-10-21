@@ -226,7 +226,7 @@ class PairPropagator:
         assert n > 0 and z.shape == (n,), "z must be a scalar or have one value per stacked array."
         return self._prop._kernel(z[:, None, None])
 
-    def _upsampled_backwards(self, b):
+    def _upsample(self, b):
         """
         Inverse transform on the upsampled grid (zero-padded spectrum), then remove padding.
 
@@ -298,6 +298,20 @@ class PairPropagator:
 
         return self._sz / self._up
 
+    def near_field_limit(self):
+        """
+        Largest |z| for which the angular-spectrum transfer function is
+        adequately sampled on the padded grid: z_max = N * sz**2 / wl, with N
+        the smaller padded dimension. Beyond it the kernel's phase changes by
+        more than pi between frequency samples, so it aliases and the
+        propagated field wraps around the window (more padding, nb, raises it).
+
+        :return: z_max (same units as wl and sz).
+        :rtype: float
+        """
+
+        return float(np.min(self._pad_dims)) * self._sz ** 2 / self.wl
+
     def stack_arrays(self, n):
         """
         Process n arrays at once. Called automatically by forwards/backwards.
@@ -348,7 +362,7 @@ class PairPropagator:
         """
 
         if self._up > 1:
-            return self._upsampled_backwards(b)
+            return self._upsample(b)
         n = 0 if b.ndim == 2 else b.shape[0]
         self.stack_arrays(n) if n else self.unstack_arrays()
         return self._prop.backwards(b)

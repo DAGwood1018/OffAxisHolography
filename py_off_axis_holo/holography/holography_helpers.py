@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-import os
-
 import cv2
-import numba as nb
 import numpy as np
-import scipy.fft
 from scipy import signal
-from scipy.ndimage import binary_dilation, gaussian_filter
 from skimage.feature import peak_local_max
 from warnings import warn
 
@@ -44,6 +39,52 @@ def optimal_tilt(dims, k0, sz):
     kx = 2 * np.pi * fx / (N * sz)
     ky = 2 * np.pi * fy / (M * sz)
     return - np.arcsin(np.array([kx, ky]) / k0)
+
+
+def avg_field(fields, ref=0, mask=None, n_iter=10):
+    """
+    Coherently average several complex fields of the same surface.
+
+    Each shot carries an arbitrary global phase (piston) from laser/path drift,
+    so the fields can't be summed directly. The piston of each shot is estimated
+    against a reference, removed, and the aligned fields are averaged. The
+    result can then be unwrapped once, e.g. UnwrapPUMA()(np.angle(avg)).
+
+    Parameters
+    ----------
+    fields : (B, H, W) complex array, or a sequence of (H, W) complex arrays
+    ref : int, index of the shot used as the initial phase reference.
+    mask : optional (H, W) bool array. Only these pixels are used to estimate
+        the piston (e.g. a flat, well-lit region). Default: all pixels.
+    n_iter : number of alignment passes. After the first pass the running
+        average replaces the single-shot reference, which reduces the bias
+        from the reference shot's own noise. 1 = align to `ref` only.
+
+    Returns
+    -------
+    avg : (H, W) complex averaged field
+    """
+
+    fields = np.asarray(fields)
+    if fields.ndim != 3:
+        raise ValueError("fields must have shape (B, H, W)")
+    fields = fields.astype(np.complex128, copy=False)
+
+    amp = np.abs(fields)
+    fields = np.divide(fields, amp, out=np.zeros_like(fields), where=amp > 0)
+
+    sel = (slice(None),) if mask is None else (slice(None), np.asarray(mask, dtype=bool))
+    flat = fields[sel].reshape(fields.shape[0], -1)          # (B, P) pixels used for alignment
+
+    target = flat[ref]
+    for _ in range(max(1, n_iter)):
+        # phase of <target, f_b>: the piston that best aligns shot b to the target
+        offsets = np.angle(flat @ target.conj())
+        rot = np.exp(-1j * offsets)
+        target = (flat * rot[:, None]).mean(axis=0)
+
+    avg = np.tensordot(rot, fields, axes=(0, 0)) / fields.shape[0]
+    return avg
 
 
 def tukey_window(dims, alpha=0.1):
@@ -105,32 +146,6 @@ def ellip_tukey_window(dims, alpha=0.1):
     window = ref[idx_from_center]
     window[rho > 1] = 0
     return window
-
-
-def gaussian_bandpass(a, lp_sigma=2.0, hp_sigma=15.0):
-    """
-    Difference-of-Gaussians band-pass over the last two axes, so it works on a
-    single image (M, N) or a stack (K, M, N). Keeps spatial scales between about
-    lp_sigma and hp_sigma pixels.
-
-    Default band-pass for the TIE autofocus (tie_autofocus). To use other
-    widths pass e.g. functools.partial(gaussian_bandpass, lp_sigma=3, hp_sigma=30).
-    A band-pass may return NaN for pixels that should be ignored (e.g. a border
-    or a dead region); the TIE regression skips them.
-
-    :param a: Image or stack of images.
-    :type a: ndarray
-    :param lp_sigma: Sigma (pixels) of the noise smoothing. Default is 2.
-    :type lp_sigma: float
-    :param hp_sigma: Sigma (pixels) of the slow part that is removed. Default is 15.
-    :type hp_sigma: float
-    :return: Band-passed image(s).
-    :rtype: ndarray
-    """
-
-    sig = lambda s: (0,) * (a.ndim - 2) + (s, s)
-    return gaussian_filter(a, sig(lp_sigma)) - gaussian_filter(a, sig(hp_sigma))
-
 
 def pad_arr(a, nb):
     """
@@ -321,171 +336,5 @@ def off_axis_masks(Fh, fp1=None, kNA=-1):
     mask01 = np.sqrt((Fx - fm1[1]) ** 2 + (Fy - fm1[0]) ** 2) <= r_k
     mask00 = np.sqrt((Fx - cx) ** 2 + (Fy - cy) ** 2) <= r_k
     return r_k, mask00, mask10, mask01
-
-
-def full_bandpass(shape, fp1, nb=0, kNA=-1):
-    """
-    Fourier support of a raw off-axis hologram: DC disk (radius 2*kNA) plus the
-    +1 and -1 side-band disks (radius kNA), in fftshift order on the raw
-    (unpadded, possibly non-square) grid.
-
-    fp1 and kNA are given on the square, padded grid used by OffAxisFilter
-    (side max(shape) + 2*nb), i.e. the same numbers passed to set_calibration().
-
-    :param shape: Shape of the raw hologram (M, N).
-    :type shape: tuple<int>
-    :param fp1: Location of the +1 order on the padded grid.
-    :type fp1: tuple<int>
-    :param nb: Padding used by OffAxisFilter. Default is 0.
-    :type nb: int
-    :param kNA: Side-band radius on the padded grid. If <= 0, uses the same
-        default as off_axis_masks (distance of fp1 from the centre / 3).
-    :type kNA: float
-    :return: Boolean bandpass filter.
-    :rtype: ndarray<bool>
-    """
-
-    ny, nx = shape
-    n_pad = max(ny, nx) + 2 * nb
-    c = n_pad / 2
-    if kNA is None or kNA <= 0:
-        kNA_pad = int(np.floor(np.hypot(fp1[0] - c, fp1[1] - c) / 3))
-    else:
-        kNA_pad = kNA
-
-    sy, sx = (fp1[0] - c) / n_pad, (fp1[1] - c) / n_pad
-    rk = kNA_pad / n_pad
-    fy = (np.arange(ny) - ny // 2) / ny
-    fx = (np.arange(nx) - nx // 2) / nx
-    FY, FX = np.meshgrid(fy, fx, indexing='ij')
-    m = np.hypot(FY - sy, FX - sx) <= rk
-    m |= np.hypot(FY + sy, FX + sx) <= rk
-    m |= np.hypot(FY, FX) <= 2.0 * rk
-    return m
-
-
-def desaturate(holo, bp_filter, sat_level=None, n_iter=300,
-               ndilate=1, tol=1e-4, workers=-1):
-    """
-    Fill saturated (clipped) pixels of a hologram by band-limited
-    extrapolation (Gerchberg-Papoulis with an inequality constraint).
-
-    Alternates between
-      * projecting onto the known Fourier support of the hologram, and
-      * restoring every unsaturated pixel to its measured value while
-        forcing saturated pixels to stay >= sat_level.
-
-    Speed: real-to-complex FFTs (scipy.fft, multithreaded), numba kernels for
-    the per-pixel steps, and the image is padded to an FFT-friendly size
-    (e.g. 964 = 4*241 is a slow length). Padded pixels are treated as unknown,
-    so they are filled band-limited instead of imposing zeros or wrap-around.
-
-    :param holo: raw hologram (2-D).
-    :type holo: ndarray
-    :param bp_filter: boolean Fourier bandpass filter (fftshift order) on the raw grid,
-        e.g. from full_bandpass. Must be point-symmetric about DC.
-    :type bp_filter: ndarray<bool>
-    :param sat_level: clipping level; default = holo.max().
-    :type sat_level: float
-    :param n_iter: maximum number of iterations. Default is 300.
-    :type n_iter: int
-    :param ndilate: dilate the saturated set by this many pixels (pixels next to
-        a clipped one are often also non-linear). Default is 1.
-    :type ndilate: int
-    :param tol: stop when the relative change of the replaced pixels < tol. Default is 1e-4.
-    :type tol: float
-    :param check_every: test convergence every this many iterations. Default is 5.
-    :type check_every: int
-    :param workers: FFT threads (-1 = all cores). Default is -1.
-    :type workers: int
-    :return: repaired float hologram, boolean mask of replaced pixels.
-    :rtype: ndarray, ndarray<bool>
-    """
-
-    @nb.njit(cache=True, parallel=True)
-    def _halve_spectrum(X, half_bp):
-        """Zero the half spectrum outside the support (in place)."""
-        ny, nh = X.shape
-        for i in nb.prange(ny):
-            for j in range(nh):
-                if not half_bp[i, j]:
-                    X[i, j] = 0.0
-
-    @nb.njit(cache=True, parallel=True)
-    def _desat_constraints(x, y, holo, state, sat_level):
-        """
-        Data-consistency step, in place on x. Returns (sum d^2, sum x^2) over the
-        replaced pixels for the convergence test.
-        state: 0 = measured (reset to holo), 1 = clipped (kept >= sat_level),
-               2 = free (dilation ring or FFT padding).
-        """
-
-        ny, nx = x.shape
-        num = np.zeros(ny)
-        den = np.zeros(ny)
-        for i in nb.prange(ny):
-            for j in range(nx):
-                s = state[i, j]
-                if s == 0:
-                    x[i, j] = holo[i, j]
-                else:
-                    v = y[i, j]
-                    if s == 1 and v < sat_level:
-                        v = sat_level
-                    d = v - x[i, j]
-                    num[i] += d * d
-                    den[i] += x[i, j] * x[i, j]
-                    x[i, j] = v
-        return num.sum(), den.sum()
-
-    def _resample_mask(mask_shifted, shape):
-        """
-        Nearest-neighbour resample of an fftshift-ed frequency mask to a new grid
-        (frequencies in cycles/pixel are preserved).
-        """
-
-        ny0, nx0 = mask_shifted.shape
-        ny, nx = shape
-        iy = np.clip(np.round((np.arange(ny) - ny // 2) / ny * ny0).astype(int) + ny0 // 2, 0, ny0 - 1)
-        ix = np.clip(np.round((np.arange(nx) - nx // 2) / nx * nx0).astype(int) + nx0 // 2, 0, nx0 - 1)
-        return mask_shifted[np.ix_(iy, ix)]
-
-    holo = np.ascontiguousarray(holo, dtype=np.float64)
-    if sat_level is None:
-        sat_level = holo.max()
-    sat = holo >= sat_level
-    if not sat.any():
-        return holo.copy(), sat
-    sat_g = binary_dilation(sat, iterations=ndilate) if ndilate else sat.copy()
-
-    ny0, nx0 = holo.shape
-    ny = scipy.fft.next_fast_len(ny0, real=True)
-    nx = scipy.fft.next_fast_len(nx0, real=True)
-    sup = bp_filter if (ny, nx) == (ny0, nx0) else _resample_mask(bp_filter, (ny, nx))
-    sup_half = np.ascontiguousarray(np.fft.ifftshift(sup)[:, :nx // 2 + 1])
-
-    # pixel states on the (possibly padded) grid
-    state = np.full((ny, nx), 2, dtype=np.uint8)            # padding: free
-    st = np.zeros((ny0, nx0), dtype=np.uint8)
-    st[sat_g] = 2
-    st[sat] = 1
-    state[:ny0, :nx0] = st
-    ref = np.zeros((ny, nx))
-    ref[:ny0, :nx0] = holo
-    x = ref.copy()
-    x[ny0:, :] = holo.mean()                                 # neutral start for padding
-    x[:, nx0:] = holo.mean()
-
-    workers = (os.cpu_count() or 1) if (workers is None or workers < 1) else int(workers)
-    for it in range(1, n_iter + 1):
-        X = scipy.fft.rfft2(x, workers=workers)
-        _halve_spectrum(X, sup_half)
-        y = scipy.fft.irfft2(X, s=(ny, nx), workers=workers)
-        num, den = _desat_constraints(x, y, ref, state, float(sat_level))
-
-        change = np.sqrt(num / (den + 1e-12))
-        if change < tol:
-            break
-    return x[:ny0, :nx0].copy(), sat_g
 
 

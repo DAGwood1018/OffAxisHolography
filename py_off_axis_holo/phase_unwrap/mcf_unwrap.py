@@ -78,7 +78,6 @@ class UnwrapMCF:
         return unwrapped, k_h, k_v
 
 
-
 def floodfill(wrapped_phase, k_h, k_v, res_density, ref_pxl=(0, 0)):
     """
     Best-first (priority) flood-fill integration of the curl-free corrected
