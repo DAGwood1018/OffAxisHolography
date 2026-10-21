@@ -41,52 +41,6 @@ def optimal_tilt(dims, k0, sz):
     return - np.arcsin(np.array([kx, ky]) / k0)
 
 
-def avg_field(fields, ref=0, mask=None, n_iter=10):
-    """
-    Coherently average several complex fields of the same surface.
-
-    Each shot carries an arbitrary global phase (piston) from laser/path drift,
-    so the fields can't be summed directly. The piston of each shot is estimated
-    against a reference, removed, and the aligned fields are averaged. The
-    result can then be unwrapped once, e.g. UnwrapPUMA()(np.angle(avg)).
-
-    Parameters
-    ----------
-    fields : (B, H, W) complex array, or a sequence of (H, W) complex arrays
-    ref : int, index of the shot used as the initial phase reference.
-    mask : optional (H, W) bool array. Only these pixels are used to estimate
-        the piston (e.g. a flat, well-lit region). Default: all pixels.
-    n_iter : number of alignment passes. After the first pass the running
-        average replaces the single-shot reference, which reduces the bias
-        from the reference shot's own noise. 1 = align to `ref` only.
-
-    Returns
-    -------
-    avg : (H, W) complex averaged field
-    """
-
-    fields = np.asarray(fields)
-    if fields.ndim != 3:
-        raise ValueError("fields must have shape (B, H, W)")
-    fields = fields.astype(np.complex128, copy=False)
-
-    amp = np.abs(fields)
-    fields = np.divide(fields, amp, out=np.zeros_like(fields), where=amp > 0)
-
-    sel = (slice(None),) if mask is None else (slice(None), np.asarray(mask, dtype=bool))
-    flat = fields[sel].reshape(fields.shape[0], -1)          # (B, P) pixels used for alignment
-
-    target = flat[ref]
-    for _ in range(max(1, n_iter)):
-        # phase of <target, f_b>: the piston that best aligns shot b to the target
-        offsets = np.angle(flat @ target.conj())
-        rot = np.exp(-1j * offsets)
-        target = (flat * rot[:, None]).mean(axis=0)
-
-    avg = np.tensordot(rot, fields, axes=(0, 0)) / fields.shape[0]
-    return avg
-
-
 def tukey_window(dims, alpha=0.1):
     """
     Create a rectangular Tukey window.
@@ -146,6 +100,7 @@ def ellip_tukey_window(dims, alpha=0.1):
     window = ref[idx_from_center]
     window[rho > 1] = 0
     return window
+
 
 def pad_arr(a, nb):
     """
