@@ -247,6 +247,7 @@ class PairPropagator:
         # keep DC (index P//2 after fftshift) at the centre of the larger grid
         oy, ox = U // 2 - P // 2
         g[..., oy:oy + P[0], ox:ox + P[1]] = b
+
         # forwards already applies the 1/N scaling (normalise_idft=False), so the
         # inverse here is unscaled, as in DFT.backwards
         a = self._ifft_up(np.fft.ifftshift(g, axes=(-2, -1)), ortho=False, normalise_idft=False)
@@ -290,6 +291,7 @@ class PairPropagator:
         M, N = (int(d) * self._up for d in self._dims)
         return (self._nstack, M, N) if self._nstack else (M, N)
 
+    @property
     def out_pxl_sz(self):
         """
         :return: Pixel size of the returned fields (input pixel size / upsample).
@@ -298,6 +300,7 @@ class PairPropagator:
 
         return self._sz / self._up
 
+    @property
     def near_field_limit(self):
         """
         Largest |z| for which the angular-spectrum transfer function is

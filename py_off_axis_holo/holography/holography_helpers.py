@@ -3,6 +3,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 from scipy import signal
+from scipy import ndimage
 from skimage.feature import peak_local_max
 from warnings import warn
 
@@ -196,11 +197,15 @@ def view_filter(Fh, mask):
     return False
 
 
-def select_mask_roi(Fh):
+def select_mask_roi(Fh, require_peak=True):
     """
     :param Fh: Fourier transformed interferogram.
     :type Fh: ndarray
-    :return: ROI you select, the local peak within that ROI
+    :param require_peak: If True, insist on a single local maximum in the ROI and return it.
+        Set False when the order will be located some other way (e.g. find_order_centroid);
+        a defocused order often has several local maxima.
+    :type require_peak: bool
+    :return: ROI you select, the local peak within that ROI (None if require_peak is False)
     :rtype: tuple, ndarray
     """
 
@@ -214,6 +219,9 @@ def select_mask_roi(Fh):
         if ROI == (0, 0, 0, 0):
             cv2.destroyWindow('Masking')
             raise RuntimeError("ROI selection cancelled.")
+        if not require_peak:
+            cv2.destroyWindow('Masking')
+            return ROI, None
 
         peaks = peak_local_max(Fh_img * roi_mask, min_distance=min([ROI[2], ROI[3]]))
         if len(peaks) == 1:
@@ -250,8 +258,52 @@ def find_peak_in_roi(Fh, ROI):
             break
         warn("Failed to identify a single peak. Try a different ROI.")
 
-    fp1 = np.array([(peaks[0][0]), (peaks[0][1])])
-    return fp1
+    return np.array([(peaks[0][0]), (peaks[0][1])])
+
+
+def find_centroid_in_roi(Fh, ROI, smooth=3.0, rel_thresh=0.2):
+    """
+    Sub-pixel location of an off-axis order from the power-weighted centroid of its
+    spectral lobe.
+
+    When the hologram is defocused the order is a broad (chirped) disk rather than a
+    sharp peak, so its maximum is set by ripple/speckle and is a poor estimate of the
+    carrier. The centroid of the whole lobe is not.
+
+    The floor is estimated from the ROI border, so draw the ROI with a margin of empty
+    spectrum around the order. Only the connected region above rel_thresh*max that
+    contains the maximum is used, so other features in the ROI are ignored.
+
+    :param Fh: Fourier transformed interferogram (fftshifted, padded grid).
+    :type Fh: ndarray
+    :param ROI: (x, y, w, h) around the order.
+    :type ROI: tuple
+    :param smooth: Gaussian smoothing (spectral pixels) applied to |Fh|^2 first. 0 disables.
+    :type smooth: float
+    :param rel_thresh: Fraction of the (smoothed, floor-subtracted) maximum that defines the lobe.
+    :type rel_thresh: float
+    :return: (row, col) of the order on the padded spectrum, as floats.
+    :rtype: ndarray
+    """
+
+    x0, y0, w, h = (int(v) for v in ROI)
+    if w <= 0 or h <= 0:
+        raise RuntimeError("Empty ROI.")
+    P = np.abs(Fh[y0:y0 + h, x0:x0 + w]).astype(float) ** 2
+    if smooth and smooth > 0:
+        P = ndimage.gaussian_filter(P, smooth)
+
+    border = np.concatenate((P[0, :], P[-1, :], P[:, 0], P[:, -1]))
+    P = np.clip(P - np.median(border), 0, None)
+    if P.max() <= 0:
+        raise RuntimeError("No signal above the ROI border level; enlarge or move the ROI.")
+
+    labels, _ = ndimage.label(P >= rel_thresh * P.max())
+    lobe = labels == labels[np.unravel_index(np.argmax(P), P.shape)]
+    Pw = P * lobe
+    rows, cols = np.indices(P.shape)
+    tot = Pw.sum()
+    return np.array([y0 + (rows * Pw).sum() / tot, x0 + (cols * Pw).sum() / tot])
 
 
 def off_axis_masks(Fh, fp1=None, kNA=-1):
@@ -291,5 +343,3 @@ def off_axis_masks(Fh, fp1=None, kNA=-1):
     mask01 = np.sqrt((Fx - fm1[1]) ** 2 + (Fy - fm1[0]) ** 2) <= r_k
     mask00 = np.sqrt((Fx - cx) ** 2 + (Fy - cy) ** 2) <= r_k
     return r_k, mask00, mask10, mask01
-
-

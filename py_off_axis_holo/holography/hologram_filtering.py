@@ -2,7 +2,8 @@ from warnings import warn
 import numpy as np
 
 from py_off_axis_holo.holography.discrete_transforms import DFT, DiscreteTransform
-from py_off_axis_holo.holography.holography_helpers import select_mask_roi, find_peak_in_roi, off_axis_masks, view_filter
+from py_off_axis_holo.holography.holography_helpers import select_mask_roi, find_peak_in_roi, find_centroid_in_roi, \
+    off_axis_masks, view_filter
 
 
 class OffAxisFilter(DFT):
@@ -47,6 +48,8 @@ class OffAxisFilter(DFT):
         self._window = None
         self._kNA = -1
         self._fit_params = (0, 0, 0)
+        self._quad = (0.0, 0.0, 0.0)   # (c, xc, yc): quadratic phase removed after filtering, see calibrate
+        self._post = None              # cached exp(-i*k0*c*|r - rc|^2) on the output grid
 
     def __call__(self, fringes):
         """
@@ -70,7 +73,37 @@ class OffAxisFilter(DFT):
         b = self.forwards(fringes)
         bf = self.filter_spectrum(b)
         a = self.backwards(bf)
+        if self._quad[0] != 0:
+            a = a * self._post_phase(a.shape[-2:])
         return a
+
+    @property
+    def curvature(self):
+        """
+        :return: (c, xc, yc): the quadratic phase k0*c*|r - rc|^2 removed from the filtered field
+            (c in 1/m, centre in m, camera-plane coordinates with the same origin as create_ref).
+        :rtype: tuple<float>
+        """
+
+        return self._quad
+
+    def _out_coords(self, shape):
+        """Camera-plane coordinates (m) of the filtered output grid, origin as in create_ref."""
+
+        m, n = shape
+        p = self.out_pxl_sz()
+        x = np.arange(n) * p - 0.5 * self._dims[1] * self._sz
+        y = np.arange(m) * p - 0.5 * self._dims[0] * self._sz
+        return np.meshgrid(x, y)
+
+    def _post_phase(self, shape):
+        """Quadratic phase correction applied to the filtered field (cached per output shape)."""
+
+        if self._post is None or self._post.shape != tuple(shape):
+            c, xc, yc = self._quad
+            X, Y = self._out_coords(shape)
+            self._post = np.exp(-1j * self._k0 * c * ((X - xc) ** 2 + (Y - yc) ** 2))
+        return self._post
 
     def _get_tilt(self, fp1):
         """
@@ -108,65 +141,52 @@ class OffAxisFilter(DFT):
         py = M*self._sz*f[1] + M/2
         return np.array([py, px])
 
-    def _fit_ref(self, U, weights=None, tol=1e-12):
+    def _fit_ref(self, U):
         """
-        Using the finite difference of the phase, find a fit to the tilt and quadratic phase shift.
-        Phase fit as phi(x, y) = a*x + b*y + c*(x^2 + y^2).
+        Fit the phase of the filtered order as phi = dk.(r - rc) + q*|r - rc|^2 (+ const) using
+        wrapped finite differences, so no unwrapping is needed. rc is the |U|^2-weighted centre
+        of the field, so dk is the carrier that centres the order's spectrum in the mask.
 
-        :param U: The complex field spatially filtered around estimate of tilt.
+        :param U: The complex field spatially filtered around the current estimate of the tilt.
         :type U: ndarray
-        :param weights: Weights to use in fit. No weights are applied if None.
-        :type weights: ndarray
-        :param tol: Tolerance parameter used to prevent divide by 0 error.
-        :return: a, b, c fit parameters.
-        :rtype: tuple<floats>
+        :return: dkx, dky (rad/m) to add to the reference wavevector, q (rad/m^2), and the
+            centre (xc, yc) in m.
+        :rtype: float, float, float, tuple<float>
         """
 
-        print(">>> Fitting Inferred Tilt...")
-        U /= (np.abs(U) + tol)
-        y, x = np.indices(U.shape, dtype=float)
-        x -= x.mean()
-        y -= y.mean()
+        p = self.out_pxl_sz()                     # camera-plane pitch of U
+        X, Y = self._out_coords(U.shape)
+        wU = np.abs(U) ** 2
+        xc, yc = (wU * X).sum() / wU.sum(), (wU * Y).sum() / wU.sum()
+        X, Y = (X - xc) / p, (Y - yc) / p          # pixel units for conditioning
 
-        # wrapped phase differences
-        gx = np.angle(U[:, 1:] * np.conj(U[:, :-1]))
-        gy = np.angle(U[1:, :] * np.conj(U[:-1, :]))
+        # wrapped phase increments and their weights
+        dUx = U[:, 1:] * np.conj(U[:, :-1])
+        dUy = U[1:, :] * np.conj(U[:-1, :])
+        gx, gy = np.angle(dUx), np.angle(dUy)
+        wx, wy = np.sqrt(np.abs(dUx)), np.sqrt(np.abs(dUy))
+        xm = 0.5 * (X[:, 1:] + X[:, :-1])
+        ym = 0.5 * (Y[1:, :] + Y[:-1, :])
 
-        # midpoint coordinates
-        xgx = 0.5 * (x[:, 1:] + x[:, :-1])
-        ygy = 0.5 * (y[1:, :] + y[:-1, :])
-
-        # gx = a + 2*c*x
-        Ax = np.column_stack([
-            np.ones(gx.size),
-            np.zeros(gx.size),
-            2 * xgx.ravel()
-        ])
-
-        # gy = b + 2*c*y
-        Ay = np.column_stack([
-            np.zeros(gy.size),
-            np.ones(gy.size),
-            2 * ygy.ravel()
-        ])
-
-        A = np.vstack((Ax, Ay)) * self._k0
+        # per-pixel model:  gx = alpha + 2*gamma*x,  gy = beta + 2*gamma*y   (pixel units)
+        A = np.column_stack([np.concatenate((np.ones(gx.size), np.zeros(gy.size))),
+                             np.concatenate((np.zeros(gx.size), np.ones(gy.size))),
+                             np.concatenate((2 * xm.ravel(), 2 * ym.ravel()))])
         bvec = np.concatenate((gx.ravel(), gy.ravel()))
-        if not weights is None:
-            assert weights.shape == U.shape, "Weights must have same shape as U."
-            wx = 0.5 * (weights[:, 1:] + weights[:, :-1])
-            wy = 0.5 * (weights[1:, :] + weights[:-1, :])
-            w = np.concatenate((wx.ravel(), wy.ravel()))
-            Aw = A * w[:, None]
-            bw = bvec * w
+        w = np.concatenate((wx.ravel(), wy.ravel()))
+        w = w / w.max()
+        coeffs, *_ = np.linalg.lstsq(A * w[:, None], bvec * w, rcond=None)
 
-            coeffs, *_ = np.linalg.lstsq(Aw, bw, rcond=None)
-        else:
-            coeffs, *_ = np.linalg.lstsq(A, bvec, rcond=None)
+        alpha, beta, gamma = coeffs
+        return alpha / p, beta / p, gamma / p ** 2, (xc, yc)
 
-        print(">>> Fitting Complete.")
-        a, b, c = coeffs
-        return a, b, c
+    def _set_filter(self, Fh, fp1, kNA, a, b):
+        """Build mask, tilt-only reference wave and cropped ifft for a given +1 order position."""
+
+        self._kNA, self._mask, _, _ = off_axis_masks(Fh, fp1=fp1, kNA=kNA)
+        self._ref = self.create_ref(self._dims[0], self._dims[1], a, b, 0)
+        self._crop_ifft(2 * self._kNA, 2 * self._kNA)
+        self._post = None
 
     def _crop_ifft(self, M, N):
         """
@@ -330,6 +350,20 @@ class OffAxisFilter(DFT):
         n_out = self.output_shape[-1]
         return self._sz * n_in / n_out / mag
 
+    def num_aperture(self, mag=1.0):
+        """
+        Size of numerical aperture.
+
+        :param mag: The magnification of the imaging system.
+        :type mag: float
+        :return: The numerical aperture size.
+        :rtype: float, None if not calibrated.
+        """
+
+        if not self.calibrated:
+            return None
+        return self.out_pxl_sz(mag=mag) * self._kNA
+
     def create_ref(self, M, N, a, b, c=0):
         """
         Create reference plane wave for tilt compensation.
@@ -358,10 +392,10 @@ class OffAxisFilter(DFT):
         :rtype: ndarray
         """
 
-        ref = self._ref
-        self._ref = np.ones_like(ref)
+        ref, quad = self._ref, self._quad
+        self._ref, self._quad = np.ones_like(ref), (0.0, 0.0, 0.0)
         dc = self.__call__(fringes)
-        self._ref = ref
+        self._ref, self._quad = ref, quad
         return np.real(dc)
 
     def contrast(self, fringes):
@@ -376,16 +410,27 @@ class OffAxisFilter(DFT):
 
         return 2 * np.abs(self.__call__(fringes)) / self.intensity(fringes)
 
-    def calibrate(self, fringes, kNA=-1, roi=None, optimize=True, visualize=False, **kwargs):
+    def calibrate(self, fringes, kNA=-1, roi=None, optimize=True, visualize=False, method='centroid',
+                  n_iter=10, tol=0.05, **kwargs):
         """
         :param fringes: Hologram (typically of background) to calibrate phase filtering to.
         :param kNA: The known numerical aperture of the system in terms of pixels. Overrides the automatic radius of the mask if not None.
-        :param roi: A pre-selected ROI to calibrate with.
-        :param optimize: Optimize the mask center according to some cost function.
+        :param roi: A pre-selected ROI (x, y, w, h) to calibrate with.
+        :param optimize: Refine the tilt from the phase of the filtered order (iterating until the order
+            moves less than tol pixels, at most n_iter times), then fit its quadratic phase (curvature)
+            and remove it from every filtered field. The curvature is removed after filtering rather than
+            with the reference wave: a chirped reference would smear the DC and -1 orders into the mask.
+            Removing it acts like a lens on the field (shifts the focus found by propagation).
         :param visualize: Show image of mask.
-        :param kwargs: Optional arguments to optimization routine.
+        :param method: Initial estimate of the order position: 'centroid' (power-weighted centroid of
+            the lobe; robust to defocus) or 'peak' (the brightest pixel; old behaviour).
+        :param n_iter: Maximum number of refinement iterations.
+        :param tol: Convergence tolerance on the order position (spectral pixels).
+        :param centroid_kw: Optional dict passed to find_order_centroid (smooth, rel_thresh).
+        :param kwargs: Optional arguments to the fit (_fit_ref), e.g. weights.
         :return: The ROI you selected, fp1 = (row, col) of the +1 order on the padded spectrum
-            (can be passed to set_calibration), and the quadratic coefficient c of the reference.
+            (can be passed to set_calibration), and the curvature c removed from the filtered field.
+            The full (c, xc, yc) is in self.curvature; pass c and centre=curvature[1:] to set_calibration.
         :rtype: tuple, ndarray, float
         """
 
@@ -394,48 +439,61 @@ class OffAxisFilter(DFT):
         if self._stacked:
             self.unstack_arrays()
         assert fringes.ndim == 2, "Calibration requires input interferogram of ndim==2."
+        assert method in ('centroid', 'peak'), "method must be 'centroid' or 'peak'."
 
         fringes = fringes.astype(self._fft.dtype)
         Fh = self.forwards(fringes)
         if roi is None:
-            roi, fp1 = select_mask_roi(Fh)
-        else:
+            roi, fp1 = select_mask_roi(Fh, require_peak=(method == 'peak'))
+        elif method == 'peak':
             fp1 = find_peak_in_roi(Fh, roi)
-        self._kNA, self._mask, _, _ = off_axis_masks(Fh, fp1=fp1, kNA=kNA)
+        if method == 'centroid':
+            fp1 = find_centroid_in_roi(Fh, roi, **kwargs)
 
-        # Construct digital reference wave
-        c = 0
         a, b = self._get_tilt(fp1)
-        self._ref = self.create_ref(self._dims[0], self._dims[1], a, b, c)
-        self._crop_ifft(2 * self._kNA, 2 * self._kNA)
+        self._quad = (0.0, 0.0, 0.0)
+        self._set_filter(Fh, fp1, kNA, a, b)
 
-        # Attempt to optimize the spatial filter alignment
         if optimize:
             try:
-                U = self(fringes)
-                da, db, c = self._fit_ref(U, **kwargs)
-                a += da
-                b += db
+                for it in range(n_iter):
+                    U = self(fringes)               # tilt-only filtering (no curvature removed yet)
+                    dkx, dky, q, centre = self._fit_ref(U, **kwargs)
+                    k = self._k0 * np.sin(np.array([a, b])) + np.array([dkx, dky])
+                    a, b = np.arcsin(k / self._k0)
 
-                # Reconstruct mask and digital reference wave
-                fp1 = self._get_peak(a, b)
-                self._kNA, self._mask, _, _ = off_axis_masks(Fh, fp1=fp1, kNA=kNA)
-                self._ref = self.create_ref(self._dims[0], self._dims[1], a, b, c)
-                self._crop_ifft(2 * self._kNA, 2 * self._kNA)
+                    fp1_new = self._get_peak(a, b)
+                    shift = np.hypot(*(fp1_new - fp1))
+                    fp1 = fp1_new
+                    self._set_filter(Fh, fp1, kNA, a, b)
+                    if shift < tol:
+                        break
+                else:
+                    warn(f"Tilt refinement did not converge in {n_iter} iterations (last step {shift:.2f} px).")
+
+                # final curvature fit on the converged filter, then remove it from the filtered field
+                _, _, q, centre = self._fit_ref(self(fringes))
+                self._quad = (q / self._k0, centre[0], centre[1])
+                self._post = None
+                print(f">>> Order at ({fp1[0]:.2f}, {fp1[1]:.2f}) after {it + 1} refinement(s); "
+                      f"removed curvature c = {self._quad[0]:.4g} 1/m about "
+                      f"({1e3 * centre[0]:.3f}, {1e3 * centre[1]:.3f}) mm.")
             except RuntimeError:
                 warn("Could not align to tilt.")
 
-        self._fit_params = (a, b, c)
+        self._fit_params = (a, b, self._quad[0])
         if visualize:
             view_filter(self.forwards(fringes), self._mask)
-        return roi, fp1, c
-        
-    def set_calibration(self, fp1, c=0, kNA=-1):
+        return roi, fp1, self._quad[0]
+
+    def set_calibration(self, fp1, c=0, kNA=-1, centre=(0.0, 0.0)):
         """
         :param fp1: Location (row, col) of the +1 order on the padded spectrum, as returned by calibrate().
-        :param c: Coefficient of quadratic phase shift of reference beam. 0 by default.
+        :param c: Coefficient of the quadratic phase removed from the filtered field (1/m), as returned
+            by calibrate(). 0 by default.
         :param kNA: The numerical aperture of the system (in terms of pixels). This determines the radius of the mask.
         If not given, it will be assumed that you aligned system in the most optimal way given location of peak.
+        :param centre: (xc, yc) in m of the quadratic phase; calibrate() stores it in curvature[1:].
         """
 
         if self.calibrated:
@@ -443,12 +501,9 @@ class OffAxisFilter(DFT):
         if self._stacked:
             self.unstack_arrays()
 
-        self._kNA, self._mask, _, _ = off_axis_masks(np.zeros(self.input_shape), fp1=fp1, kNA=kNA)
         a, b = self._get_tilt(fp1)
-
-        # Construct digital reference wave
-        self._ref = self.create_ref(self._dims[0], self._dims[1], a, b, c)
-        self._crop_ifft(2 * self._kNA, 2 * self._kNA)
+        self._set_filter(np.zeros(self.input_shape), fp1, kNA, a, b)
+        self._quad = (float(c), float(centre[0]), float(centre[1]))
         self._fit_params = (a, b, c)
 
     def reset(self):
@@ -463,6 +518,8 @@ class OffAxisFilter(DFT):
         self._kNA = -1
         self._stacked = False
         self._fit_params = (0, 0, 0)
+        self._quad = (0.0, 0.0, 0.0)
+        self._post = None
 
         self._fft = DiscreteTransform(dims, self._fft.direction, self._fft.dtype, threads=self._fft.threads,
                                       nstack=0, flags=self._ifft.flags)
