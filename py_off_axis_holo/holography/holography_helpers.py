@@ -169,6 +169,19 @@ def cam_to_obj_z(z_cam, mag=1.0):
     return z_cam / mag ** 2
 
 
+def power_spectrum(fringes):
+    """
+    Calculate raw power spectrum without any dependency on other package components.
+
+    :param fringes: The interferogram.
+    :return:
+    """
+
+    assert fringes.ndim == 2, "Expects a 2D interferogram."
+    Fh = np.fft.fftshift(np.fft.fft2(fringes))
+    return np.abs(Fh)**2
+
+
 def view_filter(Fh, mask):
     """
     Visualize the calibrated filter applied to given interferogram.
@@ -343,3 +356,33 @@ def off_axis_masks(Fh, fp1=None, kNA=-1):
     mask01 = np.sqrt((Fx - fm1[1]) ** 2 + (Fy - fm1[0]) ** 2) <= r_k
     mask00 = np.sqrt((Fx - cx) ** 2 + (Fy - cy) ** 2) <= r_k
     return r_k, mask00, mask10, mask01
+
+
+def radial_median_profile(P, centre, rmax, wedge_axis=None, wedge_half_width=np.pi / 4):
+    """
+    Median of P on 1-px wide rings about centre, r = 0...rmax-1. The median ignores whatever
+    occupies only part of a ring and rings cut by the array edge use the pixels that exist.
+
+    :param P: 2D array (e.g. a power spectrum).
+    :param centre: (row, col), may be fractional.
+    :param rmax: number of rings.
+    :param wedge_axis: (row, col) direction; pixels within half_width of this axis (both ways)
+        are left out, e.g. to measure the DC term away from the +/-1 orders.
+    :param wedge_half_width: half-angle (rad) of the excluded double cone.
+    :return: profile of length rmax (NaN for empty rings).
+    :rtype: ndarray
+    """
+
+    yy, xx = np.indices(P.shape)
+    r = np.floor(np.hypot(yy - centre[0], xx - centre[1])).astype(int)
+    keep = r < rmax
+    if wedge_axis is not None:
+        u = np.asarray(wedge_axis, float) / np.hypot(*wedge_axis)
+        dy, dx = yy - centre[0], xx - centre[1]
+        cosang = np.abs(dy * u[0] + dx * u[1]) / np.maximum(np.hypot(dy, dx), 1e-9)
+        keep &= cosang < np.cos(wedge_half_width)
+    labels = np.where(keep, r + 1, 0)
+    prof = np.asarray(ndimage.median(P, labels=labels, index=np.arange(1, rmax + 1)), float)
+    counts = np.bincount(labels.ravel(), minlength=rmax + 1)[1:]
+    prof[counts == 0] = np.nan
+    return prof
