@@ -219,21 +219,34 @@ class OffAxisFilter(DFT):
     @property
     def tilt(self):
         """
-        :return: (a, b): The tilt coefficients.
+        Read-only: set it through mask_center.
+
+        :return: (a, b): The tilt of the reference beam in radians (x, y).
         :rtype: tuple<float>
         """
 
         return self._fit_params[0], self._fit_params[1]
 
-    @property.setter
-    def tilt(self, fp1):
+    @property
+    def mask_center(self):
         """
-        :param fp1: The mask center from which tilt is calculated.
+        :return: fp1: (row, col) of the +1 order on the padded spectrum (None if not set).
+        :rtype: ndarray
+        """
+
+        return None if self._fp1 is None else self._fp1.copy()
+
+    @mask_center.setter
+    def mask_center(self, fp1):
+        """
+        Centre the mask on fp1 and set the tilt that goes with it. On an uncalibrated filter this
+        starts a calibration by hand (default radius, no curvature); set curvature and mask_radius
+        afterwards.
+
+        :param fp1: (row, col) of the +1 order on the padded spectrum.
         :type fp1: tuple<float>
         """
 
-        if not self.calibrated:
-            raise AttributeError("Other parameters are not calibrated.")
         if self._stacked:
             self.unstack_arrays()
         a, b = self._get_tilt(fp1)
@@ -250,7 +263,7 @@ class OffAxisFilter(DFT):
 
         return (self._fit_params[2], self._fit_params[3], self._fit_params[4])
 
-    @property.setter
+    @curvature.setter
     def curvature(self, quad_params):
         """
         :param quad_params: The parameters specifying the quadratic phase correction.
@@ -258,7 +271,7 @@ class OffAxisFilter(DFT):
         """
 
         if not self.calibrated:
-            raise AttributeError("Other parameters are not calibrated.")
+            raise AttributeError("Calibrate or set mask_center first.")
         if self._stacked:
             self.unstack_arrays()
         self._fit_params = (self._fit_params[0], self._fit_params[1], quad_params[0], quad_params[1], quad_params[2])
@@ -275,18 +288,21 @@ class OffAxisFilter(DFT):
             return None
         return self._kNA
 
-    @property.setter
+    @mask_radius.setter
     def mask_radius(self, kNA):
         """
         :param kNA: The radius of the filter.
-        :type kNA: tuple<float>
+        :type kNA: int
         """
 
         if not self.calibrated:
-            raise AttributeError("Other parameters are not calibrated.")
+            raise AttributeError("Calibrate or set mask_center first.")
         if self._stacked:
             self.unstack_arrays()
         self._set_filter(np.zeros(self.input_shape), self._fp1, kNA, *self._fit_params)
+        if self._window is not None:
+            self._window = None
+            warn("mask_radius changed the output size: the window was removed, call add_window again.")
 
     def fix_aspect_ratio(self, a):
         """
@@ -531,7 +547,7 @@ class OffAxisFilter(DFT):
             fp1 = self._fp1
 
         fp1 = np.asarray(fp1, float)
-        P = power_spectrum(fringes)
+        P = power_spectrum(fringes, self.input_shape)
         shape = np.array(P.shape)
         dc = shape / 2
         d = float(np.hypot(*(fp1 - dc)))
@@ -575,7 +591,7 @@ class OffAxisFilter(DFT):
         """
         :param fringes: Hologram (typically of background) to calibrate phase filtering to.
         :param kNA: The known numerical aperture of the system in terms of pixels. Overrides the automatic radius of the mask if not None.
-            To size the mask from object holograms afterwards, call tune_kNA(sample).
+            To size the mask from object holograms afterwards, call maximize_passband(sample).
         :param roi: A pre-selected ROI (x, y, w, h) to calibrate with.
         :param optimize: Refine the tilt from the phase of the filtered order (iterating until the order
             moves less than tol pixels, at most n_iter times), then fit its quadratic phase (curvature)
@@ -590,7 +606,7 @@ class OffAxisFilter(DFT):
         :param kwargs: Optional arguments to find_centroid_in_roi (smooth, rel_thresh).
         :return: The ROI you selected and fp1 = (row, col) of the +1 order on the padded spectrum.
             The curvature (c, xc, yc) removed from the filtered field is in self.curvature; reuse with
-            set_calibration(fp1, kNA, quad_fit_params=self.curvature).
+            mask_center = fp1, curvature = ..., mask_radius = kNA (see the properties).
         :rtype: tuple, ndarray
         """
 
@@ -650,7 +666,7 @@ class OffAxisFilter(DFT):
     def maximize_passband(self, sample, **kwargs):
         """
         Resize the mask to fit the +1 order of a sample (object) hologram, keeping the calibrated
-        tilt and curvature. Call after calibrate() / set_calibration(); the radius is chosen by
+        tilt and curvature. Call after calibrate() (or setting mask_center / curvature); the radius is chosen by
         estimate_kna.
 
         Resets window function.

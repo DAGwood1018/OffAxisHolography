@@ -169,17 +169,25 @@ def cam_to_obj_z(z_cam, mag=1.0):
     return z_cam / mag ** 2
 
 
-def power_spectrum(fringes):
+def power_spectrum(fringes, shape=None):
     """
-    Calculate raw power spectrum without any dependency on other package components.
+    Raw power spectrum |FFT|^2 (fftshifted) without any dependency on other package components,
+    summed over a stack.
 
-    :param fringes: The interferogram.
-    :return:
+    :param fringes: The interferogram (M, N) or a stack (K, M, N).
+    :param shape: (rows, cols) to zero-pad to before the FFT, e.g. OffAxisFilter.input_shape, so the
+        spectrum is on the same grid as the filter (padding position does not change |FFT|).
+        None: the interferogram's own shape.
+    :return: Power spectrum of shape `shape`.
     """
 
-    assert fringes.ndim == 2, "Expects a 2D interferogram."
-    Fh = np.fft.fftshift(np.fft.fft2(fringes))
-    return np.abs(Fh)**2
+    assert fringes.ndim in (2, 3), "Expects a 2D interferogram or a stack of them."
+    frames = fringes if fringes.ndim == 3 else fringes[None]
+    s = None if shape is None else tuple(int(n) for n in shape[-2:])
+    P = 0.0
+    for f in frames:
+        P = P + np.abs(np.fft.fftshift(np.fft.fft2(f, s=s))) ** 2
+    return P
 
 
 def view_filter(Fh, mask):
@@ -366,7 +374,7 @@ def radial_median_profile(P, centre, rmax, wedge_axis=None, wedge_half_width=np.
     :param P: 2D array (e.g. a power spectrum).
     :param centre: (row, col), may be fractional.
     :param rmax: number of rings.
-    :param wedge_axis: (row, col) direction; pixels within half_width of this axis (both ways)
+    :param wedge_axis: (row, col) direction; pixels within wedge_half_width of this axis (both ways)
         are left out, e.g. to measure the DC term away from the +/-1 orders.
     :param wedge_half_width: half-angle (rad) of the excluded double cone.
     :return: profile of length rmax (NaN for empty rings).
