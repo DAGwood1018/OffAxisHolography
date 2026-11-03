@@ -508,7 +508,7 @@ class OffAxisFilter(DFT):
 
         return 2 * np.abs(self.__call__(fringes)) / self.intensity(fringes)
 
-    def estimate_kna(self, sample, fp1=None, energy=0.995, margin=1.05, snr=3.0, rel=0.01):
+    def estimate_kna(self, sample, fp1=None, energy=0.995, margin=1.05, snr=3.0, rel=0.01, run=5):
         """
         Mask radius that keeps (nearly) all of the +1 order of the given holograms, limited so that
         the mask does not reach the DC term or the -1 order.
@@ -526,10 +526,11 @@ class OffAxisFilter(DFT):
                      the +/-1 orders; r_dc is where it first stays below snr * floor;
           * limit  k_max = min(d - r_dc, 2 d - r_order) with d = |fp1 - DC| (no overlap with the DC
                      term or with the -1 order), and k_max < d (required by off_axis_masks);
-          * kNA    = min(margin * r_order, k_max), but never below the classic d / 3 when the order
-                     needs more than k_max (nothing fits then; d / 3 is the usual compromise).
-        Warns if the order needs more than k_max (information is lost to overlap) or if it reaches
-        the edge of the spectrum (gradients beyond the camera's Nyquist limit are aliased).
+          * kNA    = max(min(margin * r_order, k_max), d / 3): never below the classic d / 3 (the
+                     default radius used by calibrate), even if that overlaps the DC term.
+        Warns if the order needs more than k_max (information is lost to overlap), if the final mask
+        overlaps the DC term (increase the off-axis tilt to fix it), or if the order reaches the edge of
+        the spectrum (gradients beyond the camera's Nyquist limit are aliased).
 
         :param sample: Object hologram(s), (M, N) or (K, M, N).
         :param fp1: (row, col) of the +1 order; default: the calibrated one.
@@ -568,15 +569,19 @@ class OffAxisFilter(DFT):
                  f"to DC ({half} px); it probably overlaps the DC term.")
 
         below = prof_dc < snr
-        run = 5
         r_dc = next((i for i in range(rmax - run) if below[i:i + run].all()), rmax)
 
         k_max = min(d - r_dc, 2 * d - r_order, d - 1)
         k = margin * r_order
         if k > k_max:
-            k = max(k_max, d / 3)
             warn(f"The order needs a radius of ~{margin * r_order:.0f} px but only {k_max:.0f} px "
                  f"fit before cross contamination.")
+            k = k_max
+        k = max(k, d / 3)                   # never smaller than the default (calibrate's d / 3)
+        if np.floor(k) > d - r_dc:
+            warn(f"The mask (radius {np.floor(k):.0f} px) overlaps the DC term (radius ~{r_dc} px, "
+                 f"{d:.0f} px from the +1 order) by ~{np.floor(k) - (d - r_dc):.0f} px. "
+                 f"Increase the off-axis tilt to separate them.")
 
         past_edge = float(max(0.0, np.max(np.concatenate((r_order - fp1, r_order - (shape - 1 - fp1))))))
         if past_edge > 0:
