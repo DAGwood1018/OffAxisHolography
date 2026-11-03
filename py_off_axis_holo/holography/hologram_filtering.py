@@ -508,7 +508,7 @@ class OffAxisFilter(DFT):
 
         return 2 * np.abs(self.__call__(fringes)) / self.intensity(fringes)
 
-    def estimate_kna(self, fringes, fp1=None, energy=0.995, margin=1.05, snr=3.0, rel=0.01):
+    def estimate_kna(self, sample, fp1=None, energy=0.995, margin=1.05, snr=3.0, rel=0.01):
         """
         Mask radius that keeps (nearly) all of the +1 order of the given holograms, limited so that
         the mask does not reach the DC term or the -1 order.
@@ -531,7 +531,7 @@ class OffAxisFilter(DFT):
         Warns if the order needs more than k_max (information is lost to overlap) or if it reaches
         the edge of the spectrum (gradients beyond the camera's Nyquist limit are aliased).
 
-        :param fringes: Object hologram(s), (M, N) or (K, M, N).
+        :param sample: Object hologram(s), (M, N) or (K, M, N).
         :param fp1: (row, col) of the +1 order; default: the calibrated one.
         :param energy: Fraction of the order's excess power to keep. Default 0.995.
         :param margin: Factor applied to r_order. Default 1.05.
@@ -547,7 +547,7 @@ class OffAxisFilter(DFT):
             fp1 = self._fp1
 
         fp1 = np.asarray(fp1, float)
-        P = power_spectrum(fringes, self.input_shape)
+        P = power_spectrum(sample, self.input_shape)
         shape = np.array(P.shape)
         dc = shape / 2
         d = float(np.hypot(*(fp1 - dc)))
@@ -586,10 +586,10 @@ class OffAxisFilter(DFT):
         kNA = int(np.floor(k))
         return kNA, r_order, r_dc, prof_p1, prof_dc
 
-    def calibrate(self, fringes, kNA=-1, roi=None, optimize=True, visualize=False, method='centroid',
+    def calibrate(self, bckgrnd, kNA=-1, roi=None, optimize=True, visualize=False, method='centroid',
                   n_iter=10, tol=0.05, **kwargs):
         """
-        :param fringes: Hologram (typically of background) to calibrate phase filtering to.
+        :param bckgrnd: Hologram (typically of background) to calibrate phase filtering to.
         :param kNA: The known numerical aperture of the system in terms of pixels. Overrides the automatic radius of the mask if not None.
             To size the mask from object holograms afterwards, call maximize_passband(sample).
         :param roi: A pre-selected ROI (x, y, w, h) to calibrate with.
@@ -614,11 +614,11 @@ class OffAxisFilter(DFT):
             self.reset()
         if self._stacked:
             self.unstack_arrays()
-        assert fringes.ndim == 2, "Calibration requires input interferogram of ndim==2."
+        assert bckgrnd.ndim == 2, "Calibration requires input interferogram of ndim==2."
         assert method in ('centroid', 'peak'), "Method must be 'centroid' or 'peak'."
 
-        fringes = fringes.astype(self._fft.dtype)
-        Fh = self.forwards(fringes)
+        bckgrnd = bckgrnd.astype(self._fft.dtype)
+        Fh = self.forwards(bckgrnd)
         if roi is None:
             roi, fp1 = select_mask_roi(Fh, require_peak=(method == 'peak'))
         elif method == 'peak':
@@ -632,7 +632,7 @@ class OffAxisFilter(DFT):
         if optimize:
             try:
                 for it in range(n_iter):
-                    U = self(fringes)               # tilt-only filtering (no curvature removed yet)
+                    U = self(bckgrnd)               # tilt-only filtering (no curvature removed yet)
                     dkx, dky, q, centre = self._fit_ref(U)
                     k = self._k0 * np.sin(np.array([a, b])) + np.array([dkx, dky])
                     a, b = np.arcsin(k / self._k0)
@@ -647,7 +647,7 @@ class OffAxisFilter(DFT):
                     warn(f"Tilt refinement did not converge in {n_iter} iterations (last step {shift:.2f} px).")
 
                 # final curvature fit on the converged filter, then remove it from the filtered field
-                _, _, q, centre = self._fit_ref(self(fringes))
+                _, _, q, centre = self._fit_ref(self(bckgrnd))
                 self._fit_params = (a, b, q / self._k0, centre[0], centre[1])
                 print(f">>> Order at ({fp1[0]:.2f}, {fp1[1]:.2f}) after {it + 1} refinement(s); "
                       f"removed curvature c = {self._fit_params[2]:.4g} 1/m about "
@@ -660,7 +660,7 @@ class OffAxisFilter(DFT):
 
         self._set_filter(Fh, fp1, kNA, *self._fit_params)
         if visualize:
-            view_filter(self.forwards(fringes), self._mask)
+            view_filter(self.forwards(bckgrnd), self._mask)
         return roi, fp1
 
     def maximize_passband(self, sample, **kwargs):
